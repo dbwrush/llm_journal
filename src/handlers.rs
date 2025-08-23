@@ -285,9 +285,16 @@ async fn journal_page(
 
             // Load prompts for this date
             let mut prompts = Vec::new();
-            for i in 1..=app_state.config.journal.max_prompts_per_day {
-                if let Ok(Some(prompt)) = journal_manager.load_prompt(&cycle_date, i).await {
-                    prompts.push(prompt);
+            // Instead of limiting to max_prompts_per_day, load all available prompts
+            let mut prompt_number = 1;
+            loop {
+                match journal_manager.load_prompt(&cycle_date, prompt_number).await {
+                    Ok(Some(prompt)) => {
+                        prompts.push(prompt);
+                        prompt_number += 1;
+                    }
+                    Ok(None) => break, // No more prompts found
+                    Err(_) => break,   // Error loading, stop trying
                 }
             }
 

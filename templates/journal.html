@@ -579,19 +579,21 @@
 }
 
 .nav-btn {
-    background: var(--accent-primary);
-    color: var(--bg-primary);
-    border: none;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    border: 2px solid var(--input-border);
     padding: 8px 16px;
     border-radius: 6px;
     font-size: 0.9em;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
 }
 
 .nav-btn:hover:not(:disabled) {
-    background: var(--accent-secondary);
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border-color: var(--accent-primary);
     transform: translateY(-1px);
 }
 
@@ -796,12 +798,20 @@ async function generateLLMPrompt() {
 
 // Prompt Navigation
 let currentPromptNumber = 1;
-let maxPrompts = '{% if prompts.len() > 0 %}{{ prompts.len() }}{% else %}0{% endif %}';
+let maxPrompts = 0; // Will be calculated from DOM
 let cycleDate = '{{ cycle_date }}';
 
 // Auto-save variables
 let autoSaveEnabled = true;
 let autoSaveTimer = null;
+
+// Function to count actual prompts in the DOM
+function updateMaxPromptsFromDOM() {
+    const promptElements = document.querySelectorAll('.prompt-item:not(.loading-prompt)');
+    maxPrompts = promptElements.length;
+    console.log('Updated maxPrompts from DOM:', maxPrompts);
+    return maxPrompts;
+}
 
 async function navigatePrompt(direction) {
     const newPromptNumber = direction === 'next' ? currentPromptNumber + 1 : currentPromptNumber - 1;
@@ -824,6 +834,9 @@ function showPrompt(promptNumber) {
     if (targetPrompt) {
         targetPrompt.style.display = 'block';
         currentPromptNumber = promptNumber;
+        
+        // Update navigation with current state
+        updateNavigation(promptNumber, promptNumber > 1, promptNumber < maxPrompts);
     }
 }
 
@@ -895,6 +908,9 @@ function createPromptElement(promptNumber, promptText, promptType) {
     
     // Insert before loading prompt
     container.insertBefore(promptElement, loadingPrompt);
+    
+    // Update the maxPrompts count since we added a new prompt
+    updateMaxPromptsFromDOM();
 }
 
 function showGenerationSuccess() {
@@ -991,7 +1007,6 @@ async function generateAnotherPrompt() {
                 // Prompt is ready immediately
                 hideLoadingPrompt();
                 createPromptElement(data.prompt_number, data.prompt, data.prompt_type);
-                maxPrompts = Math.max(maxPrompts, data.prompt_number);
                 
                 // Navigate to the new prompt
                 showPrompt(data.prompt_number);
@@ -1057,7 +1072,6 @@ async function pollForPrompt(promptNumber) {
                     
                     // Create and show the new prompt
                     createPromptElement(promptNumber, data.prompt, 'Daily');
-                    maxPrompts = Math.max(maxPrompts, promptNumber);
                     
                     // Navigate to the new prompt
                     showPrompt(promptNumber);
@@ -1107,8 +1121,17 @@ async function pollForPrompt(promptNumber) {
 
 // Initialize prompt navigation on page load
 document.addEventListener('DOMContentLoaded', function() {
+    // Count actual prompts in DOM to get the real maxPrompts value
+    updateMaxPromptsFromDOM();
+    
     if (maxPrompts > 0) {
         updateNavigation(1, false, 1 < maxPrompts);
+        
+        // Force update the counter display to override server-side value
+        const counter = document.getElementById('prompt-counter');
+        if (counter) {
+            counter.textContent = `1 of ${maxPrompts}`;
+        }
     }
     
     // Calendar date picker functionality

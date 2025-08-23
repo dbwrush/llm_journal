@@ -11,6 +11,10 @@
     
     <!-- Markdown parser for rich text formatting -->
     <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    
+    <!-- Journal-specific styles -->
+    <link rel="stylesheet" href="/static/journal.css">
+    
     <style>
         :root {
             /* Misty Pine Theme Colors */
@@ -67,5 +71,8 @@
 </head>
 <body>
     {% block content %}{% endblock %}
+    
+    <!-- Journal-specific JavaScript -->
+    <script src="/static/journal.js"></script>
 </body>
 </html>
