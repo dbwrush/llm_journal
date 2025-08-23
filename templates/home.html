@@ -1,0 +1,422 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="tabs-row" id="tabs-row">
+    {% for habit in habits %}
+        <a href="/?habit={{ loop.index0 }}" style="text-decoration:none;">
+            <div class="tab{% if selected_habit == loop.index0 %} selected{% endif %}" data-habit-idx="{{ loop.index0 }}">
+                <img src="/static/{{ habit.icon_path }}" alt="{{ habit.name }}" class="tab-icon" />
+            </div>
+        </a>
+    {% endfor %}
+</div>
+
+
+<script>
+// Data for all habits, injected as JSON
+const habits = JSON.parse(`{{ habits_json|safe }}`);
+const selectedHabit = parseInt("{{ selected_habit }}", 10);
+
+// Helper: calculate average streak (in seconds)
+function averageStreak(habit) {
+    if (!habit.past_streak_durations || habit.past_streak_durations.length === 0) return 0;
+    let sum = habit.past_streak_durations.reduce((a, b) => a + b, 0);
+    return sum / habit.past_streak_durations.length;
+}
+
+// Helper: get current streak duration (in seconds)
+function currentStreak(habit) {
+    if (!habit.current_streak_start) return 0;
+    let start = new Date(habit.current_streak_start).getTime();
+    let now = Date.now();
+    return Math.floor((now - start) / 1000);
+}
+
+// Helper: calculate ratio to nearest tenth
+function streakRatio(habit) {
+    let avg = averageStreak(habit);
+    // Treat 0-second averages as 1-second for display purposes to avoid stuck 0.0 ratios
+    if (avg === 0) avg = 1;
+    let curr = currentStreak(habit);
+    return Math.floor((curr / avg) * 10) / 10; // Round down to nearest tenth
+}
+
+// Color gradient from red to green (9 stops), then royal progression to violet (4 more stops)
+const gradient = [
+    'var(--c-red)', 'var(--c-red2)', 'var(--c-orange)', 'var(--c-orange2)',
+    'var(--c-yellow)', 'var(--c-yellow2)', 'var(--c-lime)', 'var(--c-green2)', 'var(--c-green)',
+    // Royal progression for ratios > 2.0
+    'var(--c-cyan)', 'var(--c-blue)', 'var(--c-indigo)', 'var(--c-violet)'
+];
+
+
+
+// Convert CSS variable color to RGB
+function cssVarToRGB(cssVar) {
+    const temp = document.createElement('div');
+    temp.style.color = cssVar;
+    document.body.appendChild(temp);
+    const rgb = getComputedStyle(temp).color;
+    document.body.removeChild(temp);
+    // rgb is like 'rgb(255, 0, 0)'
+    return rgb.match(/\d+/g).map(Number);
+}
+
+// Generate a dithered pattern using a Bayer matrix and return a data URL
+function getDitheredDataURL(colorA, colorB, frac, size = 8) {
+    // 8x8 Bayer matrix (values 0-63)
+    const bayer = [
+        [0, 48, 12, 60, 3, 51, 15, 63],
+        [32, 16, 44, 28, 35, 19, 47, 31],
+        [8, 56, 4, 52, 11, 59, 7, 55],
+        [40, 24, 36, 20, 43, 27, 39, 23],
+        [2, 50, 14, 62, 1, 49, 13, 61],
+        [34, 18, 46, 30, 33, 17, 45, 29],
+        [10, 58, 6, 54, 9, 57, 5, 53],
+        [42, 26, 38, 22, 41, 25, 37, 21],
+    ];
+    const threshold = Math.floor(frac * 64);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const useB = bayer[y % 8][x % 8] < threshold;
+            const color = useB ? colorB : colorA;
+            ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
+            ctx.fillRect(x, y, 1, 1);
+        }
+    }
+    return canvas.toDataURL();
+}
+
+// Dithered color: returns a CSS background with a dither pattern between two colors
+function getDitheredBackground(ratio) {
+    let scaled;
+    
+    if (ratio <= 2.0) {
+        // Normal linear progression from red to green (first 9 colors)
+        scaled = ratio * (8) / 2; // 0-2.0 maps to 0-8 (first 9 colors, indices 0-8)
+    } else {
+        // Logarithmic progression for royal colors (ratio > 2.0)
+        // Log scale: ratio 2.0 -> 8.0, ratio 4.0 -> 9.0, ratio 8.0 -> 10.0, ratio 16.0 -> 11.0, ratio 32.0+ -> 12.0 (violet)
+        const logRatio = Math.log2(ratio); // log2(2) = 1, log2(4) = 2, log2(8) = 3, etc.
+        const maxLogRatio = 5; // log2(32) = 5, beyond this we stay at violet
+        scaled = 8 + Math.min(4, (logRatio - 1) * 4 / (maxLogRatio - 1)); // Maps log scale to indices 8-12
+    }
+    
+    let idxA = Math.floor(scaled);
+    let idxB = Math.min(gradient.length - 1, idxA + 1);
+    let frac = scaled - idxA;
+    
+    // Cap at violet (last color)
+    if (idxA >= gradient.length - 1) {
+        return gradient[gradient.length - 1];
+    }
+    
+    if (frac === 0) {
+        return gradient[idxA];
+    } else if (frac === 1 || idxB >= gradient.length - 1) {
+        return gradient[idxB];
+    } else {
+        // Convert CSS vars to RGB
+        let colorA = cssVarToRGB(gradient[idxA]);
+        let colorB = cssVarToRGB(gradient[idxB]);
+        return `url('${getDitheredDataURL(colorA, colorB, frac)}')`;
+    }
+}
+
+// Set tab backgrounds
+window.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach((tab, idx) => {
+        let habit = habits[idx];
+        let ratio = streakRatio(habit);
+        let bg = getDitheredBackground(ratio);
+        tab.style.background = bg;
+        tab.style.backgroundSize = '32px 32px';
+        tab.style.backgroundRepeat = 'repeat';
+        tab.style.imageRendering = 'pixelated';
+    });
+});
+</script>
+<div style="text-align:center; margin-top:48px; color:var(--c-yellow); font-family:inherit;" class="habit-name">
+    {{ habits[selected_habit].name }}
+</div>
+
+<div id="habit-info-panel" style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:16px; width:100%;">
+    <div id="streak-duration" class="duration" style="color:var(--c-green); min-width:12ch; min-height:1.5em; display:flex; align-items:center; justify-content:center; margin-bottom:8px;"></div>
+    <div id="next-deadline" class="deadline" style="color:var(--c-orange); min-width:12ch; min-height:1.5em; display:flex; align-items:center; justify-content:center; margin-bottom:8px; font-size: var(--font-size-duration);"></div>
+    <div id="streak-ratio" class="ratio" style="color:var(--c-yellow2); min-width:12ch; min-height:0.1em; display:flex; align-items:center; justify-content:center; line-height:1; margin-bottom:8px;"></div>
+    <div id="avg-streaks" class="averages" style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:12ch; min-height:1.5em; margin-top:8px;">
+        <div id="avg-streak-current" style="color:var(--c-gray2); text-align:center; margin-bottom:4px;"></div>
+        <div id="avg-streak-projected" style="color:var(--c-gray2); text-align:center;"></div>
+    </div>
+</div>
+
+<!-- Button for non-physical devices -->
+<div id="action-button-container" style="display:flex; justify-content:center; margin-top:24px;">
+    <button id="action-button" onclick="handleHabitButtonPress()" style="
+        background: var(--c-bg);
+        color: var(--c-green);
+        border: 4px solid var(--c-yellow);
+        font-family: inherit;
+        font-size: var(--font-size-duration);
+        padding: 8px 16px;
+        cursor: pointer;
+        image-rendering: pixelated;
+        box-sizing: border-box;
+    ">Press Button</button>
+</div>
+
+<script>
+// Device detection data from server (injected as data attribute)
+document.body.setAttribute('data-physical-device', '{{ is_physical_device }}');
+</script>
+
+<script>
+// Get device detection from data attribute
+const isPhysicalDevice = document.body.getAttribute('data-physical-device') === 'true';
+// ...existing code...
+
+function formatDuration(seconds) {
+    let s = seconds % 60;
+    let m = Math.floor(seconds / 60) % 60;
+    let h = Math.floor(seconds / 3600) % 24;
+    let d = Math.floor(seconds / 86400);
+    return `${d.toString().padStart(2,'0')}:${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+}
+
+function projectedAverageStreak(habit) {
+    // What the average would be if the current streak ended now
+    let durations = habit.past_streak_durations ? habit.past_streak_durations.slice() : [];
+    let curr = currentStreak(habit);
+    if (curr > 0) durations.push(curr);
+    if (durations.length === 0) return 0;
+    let sum = durations.reduce((a, b) => a + b, 0);
+    return sum / durations.length;
+}
+
+// Handle habit button press
+function handleHabitButtonPress(habitIndex = null) {
+    // Default to currently selected habit if no index provided
+    const targetHabitIndex = habitIndex !== null ? habitIndex : selectedHabit;
+    
+    // Create URL-encoded form data instead of FormData
+    const params = new URLSearchParams();
+    params.append('habit_index', targetHabitIndex);
+    
+    // Submit the button press to the server
+    fetch('/button_press', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params,
+        credentials: 'same-origin'
+    })
+    .then(response => {
+        if (response.ok) {
+            // Server will redirect us back to the updated page
+            window.location.reload();
+        } else {
+            console.error('Button press failed:', response.status);
+            alert('Failed to process button press. Please try again.');
+        }
+    })
+    .catch(error => {
+        console.error('Network error during button press:', error);
+        alert('Network error. Please check your connection and try again.');
+    });
+}
+
+// Handle keyboard events for physical button simulation and navigation
+function setupPhysicalButtonEvents() {
+    document.addEventListener('keydown', function(event) {
+        // Handle navigation with arrow keys
+        if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+            event.preventDefault();
+            let newHabitIndex;
+            if (event.key === 'ArrowLeft') {
+                // Move to previous habit, wrap around to end if at beginning
+                newHabitIndex = selectedHabit > 0 ? selectedHabit - 1 : habits.length - 1;
+            } else {
+                // Move to next habit, wrap around to beginning if at end
+                newHabitIndex = selectedHabit < habits.length - 1 ? selectedHabit + 1 : 0;
+            }
+            // Navigate to the new habit
+            window.location.href = `/?habit=${newHabitIndex}`;
+            return;
+        }
+        
+        // Check if this is a custom device (we'll add device detection later)
+        // For now, treat Enter key as button press in any case
+        if (event.key === 'Enter' && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+            event.preventDefault();
+            handleHabitButtonPress();
+        }
+    });
+}
+
+
+// Helper: calculate next deadline for a positive habit
+function getNextDeadline(habit) {
+    if (habit.habit_type !== 'Positive' || !habit.deadline_times || habit.deadline_times.length === 0) {
+        return null;
+    }
+    
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Sort deadline times
+    const sortedDeadlines = [...habit.deadline_times].sort();
+    
+    // Find next deadline today
+    for (const deadlineTimeStr of sortedDeadlines) {
+        const [hours, minutes, seconds] = deadlineTimeStr.split(':').map(Number);
+        const deadlineToday = new Date(today);
+        deadlineToday.setHours(hours, minutes, seconds || 0, 0);
+        
+        if (deadlineToday > now) {
+            return deadlineToday;
+        }
+    }
+    
+    // No more deadlines today, get first deadline tomorrow
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const [hours, minutes, seconds] = sortedDeadlines[0].split(':').map(Number);
+    tomorrow.setHours(hours, minutes, seconds || 0, 0);
+    
+    return tomorrow;
+}
+
+// Helper: format countdown time
+function formatCountdown(milliseconds) {
+    if (milliseconds <= 0) {
+        return "OVERDUE";
+    }
+    
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+function updateHabitInfoPanel() {
+    const habit = habits[selectedHabit];
+    // 1. Current streak duration
+    const currStreak = currentStreak(habit);
+    const streakDurationStr = formatDuration(currStreak);
+    // 2. Ratio to nearest tenth
+    const ratio = streakRatio(habit);
+    // 3. Current and projected average streak durations
+    const avg = averageStreak(habit);
+    const projAvg = projectedAverageStreak(habit);
+    
+    // 4. Next deadline countdown (for positive habits only)
+    const nextDeadline = getNextDeadline(habit);
+    const nextDeadlineDiv = document.getElementById('next-deadline');
+    if (nextDeadline && !habit.completed_since_last_deadline) {
+        const timeUntilDeadline = nextDeadline.getTime() - Date.now();
+        const countdownStr = formatCountdown(timeUntilDeadline);
+        nextDeadlineDiv.textContent = `Next: ${countdownStr}`;
+        nextDeadlineDiv.style.display = 'flex';
+        
+        // Change color based on urgency
+        if (timeUntilDeadline <= 0) {
+            nextDeadlineDiv.style.color = 'var(--c-red)';
+        } else if (timeUntilDeadline <= 3600000) { // 1 hour
+            nextDeadlineDiv.style.color = 'var(--c-orange)';
+        } else if (timeUntilDeadline <= 7200000) { // 2 hours
+            nextDeadlineDiv.style.color = 'var(--c-yellow)';
+        } else {
+            nextDeadlineDiv.style.color = 'var(--c-lime)';
+        }
+    } else {
+        nextDeadlineDiv.style.display = 'none';
+    }
+    
+    // Set text
+    const streakDurationDiv = document.getElementById('streak-duration');
+    const streakRatioDiv = document.getElementById('streak-ratio');
+    const avgStreakCurrentDiv = document.getElementById('avg-streak-current');
+    const avgStreakProjectedDiv = document.getElementById('avg-streak-projected');
+    streakDurationDiv.textContent = streakDurationStr;
+    streakRatioDiv.textContent = ratio.toFixed(1);
+    avgStreakCurrentDiv.textContent = formatDuration(Math.round(avg));
+    avgStreakProjectedDiv.textContent = formatDuration(Math.round(projAvg));
+    
+    // Update button text based on habit type
+    const actionButton = document.getElementById('action-button');
+    if (actionButton) {
+        if (habit.habit_type === 'Positive') {
+            actionButton.textContent = 'Complete!';
+        } else {
+            actionButton.textContent =  'Break streak';
+        }
+    }
+}
+
+// Update all tab backgrounds in real-time
+function updateAllTabBackgrounds() {
+    document.querySelectorAll('.tab').forEach((tab, idx) => {
+        let habit = habits[idx];
+        let ratio = streakRatio(habit);
+        let bg = getDitheredBackground(ratio);
+        tab.style.background = bg;
+        tab.style.backgroundSize = '32px 32px';
+        tab.style.backgroundRepeat = 'repeat';
+        tab.style.imageRendering = 'pixelated';
+    });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    // Set up initial tab backgrounds
+    updateAllTabBackgrounds();
+    
+    // Hide action button for physical devices
+    if (isPhysicalDevice) {
+        const buttonContainer = document.getElementById('action-button-container');
+        if (buttonContainer) {
+            buttonContainer.style.display = 'none';
+        }
+    }
+    
+    // Initialize habit info panel
+    updateHabitInfoPanel();
+    
+    // Set up live updates for both streak info and tab colors
+    const updateInterval = setInterval(() => {
+        updateHabitInfoPanel();
+        updateAllTabBackgrounds();
+    }, 1000);
+
+    const reloadInterval = setInterval(() => {
+        // Reload the page every 5 minutes to ensure data is fresh
+        window.location.reload();
+    }, 5 * 60 * 1000); // 5 minutes in milliseconds
+    
+    // Set up physical button event handling
+    setupPhysicalButtonEvents();
+    
+    // Clean up interval when page unloads
+    window.addEventListener('beforeunload', () => {
+        clearInterval(updateInterval);
+    });
+    
+    // Add visibility change handler to debug focus issues
+    document.addEventListener('visibilitychange', function() {
+        console.log('👁️ Page visibility changed:', document.hidden ? 'hidden' : 'visible');
+    });
+});
+</script>
+{% endblock %}

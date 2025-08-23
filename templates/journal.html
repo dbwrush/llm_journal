@@ -1,0 +1,986 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="journal-container">
+    <header class="journal-header">
+        <h1>Journal Entry</h1>
+        <div class="date-info-row">
+            <div class="date-display">
+                <div class="cycle-date">{{ cycle_date }}</div>
+                <input type="date" id="date-picker" class="real-date-input" 
+                       value="{{ real_date_iso }}" title="Click to jump to any date" />
+            </div>
+            <div class="entry-type">{{ entry_type }}</div>
+        </div>
+    </header>
+
+    {% if prompts.len() > 0 %}
+    <section class="prompts-section">
+        <div class="prompts-header">
+            <h2>Today's Prompts</h2>
+            <div class="prompt-navigation">
+                <button class="nav-btn" id="prev-prompt" onclick="navigatePrompt('prev')" disabled>← Previous</button>
+                <span class="prompt-counter" id="prompt-counter">1 of {{ prompts.len() }}</span>
+                <button class="nav-btn" id="next-prompt" onclick="navigatePrompt('next')">Next →</button>
+            </div>
+        </div>
+        
+        <div class="current-prompt-container">
+            {% for prompt in prompts %}
+            <div class="prompt-item" id="prompt-{{ prompt.prompt_number }}" {% if prompt.prompt_number == 1 %}style="display: block;"{% else %}style="display: none;"{% endif %}>
+                <div class="prompt-header">
+                    <span class="prompt-number">Prompt {{ prompt.prompt_number }}</span>
+                    <span class="prompt-type">{{ prompt.prompt_type|safe }}</span>
+                </div>
+                <div class="prompt-text">{{ prompt.prompt }}</div>
+            </div>
+            {% endfor %}
+            
+            <!-- Placeholder for loading new prompts -->
+            <div class="prompt-item loading-prompt" id="loading-prompt" style="display: none;">
+                <div class="prompt-header">
+                    <span class="prompt-number">Loading...</span>
+                    <span class="prompt-type">Generating</span>
+                </div>
+                <div class="prompt-text">
+                    <div class="loading-indicator">
+                        <span class="loading-dot"></span>
+                        <span class="loading-dot"></span>
+                        <span class="loading-dot"></span>
+                    </div>
+                    <p>Generating a new prompt for you...</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    {% else %}
+    <!-- No prompts exist yet - show generate button -->
+    <section class="prompts-section">
+        <div class="prompts-header">
+            <h2>Today's Prompts</h2>
+            <div class="prompt-navigation">
+                <button class="generate-first-prompt-btn" onclick="generateFirstPrompt()">Generate Today's Prompts</button>
+            </div>
+        </div>
+        
+        <div class="no-prompts-message">
+            <p>No prompts have been generated for today yet. Click the button above to create your first prompt!</p>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="entry-section">
+        <form id="journal-form" action="/journal/entry" method="post">
+            <textarea 
+                id="journal-content" 
+                name="content" 
+                placeholder="Write your thoughts here..."
+                rows="20"
+                required
+            >{{ existing_content }}</textarea>
+            <div class="entry-actions">
+                <button type="submit" class="save-btn">Save Entry</button>
+                {% if is_today %}
+                <button type="button" class="auto-save-toggle" data-enabled="true">Auto-save: ON</button>
+                {% endif %}
+            </div>
+        </form>
+    </section>
+
+    <nav class="journal-nav">
+        <div class="date-nav">
+            <a href="/journal?date={{ prev_date }}" class="nav-link">← Previous</a>
+            <a href="/journal" class="nav-link">Today</a>
+            <a href="/journal?date={{ next_date }}" class="nav-link">Next →</a>
+        </div>
+    </nav>
+</div>
+
+<style>
+.journal-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    font-family: inherit;
+}
+
+.journal-header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 30px;
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px var(--shadow-medium);
+}
+
+.journal-header h1 {
+    color: var(--text-primary);
+    margin: 0 0 20px 0;
+    font-size: 2.5em;
+    font-weight: 300;
+    letter-spacing: 1px;
+}
+
+.entry-type {
+    color: var(--accent-warm);
+    font-size: 1.1em;
+    font-weight: 500;
+    padding: 12px 16px;
+    background: rgba(196, 161, 115, 0.1);
+    border-radius: 8px;
+    white-space: nowrap;
+    min-height: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.date-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.date-display {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    flex: 1;
+}
+
+.cycle-date {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    padding: 12px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1.1em;
+    letter-spacing: 0.5px;
+    min-height: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.real-date-input {
+    background: var(--input-bg);
+    color: var(--text-primary);
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 1.1em;
+    border: 2px solid var(--input-border);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-family: inherit;
+    min-width: 200px;
+    min-height: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.real-date-input:hover {
+    background: var(--bg-secondary);
+    border-color: var(--accent-primary);
+}
+
+.real-date-input:focus {
+    outline: none;
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px rgba(126, 179, 179, 0.2);
+}
+
+.real-date-input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: brightness(0) saturate(100%) invert(80%) sepia(8%) saturate(1151%) hue-rotate(138deg) brightness(99%) contrast(89%);
+    opacity: 0.8;
+    padding-left: 8px;
+}
+
+.prompts-section {
+    margin-bottom: 30px;
+    background: var(--bg-secondary);
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px var(--shadow-medium);
+}
+
+.prompts-section h2 {
+    color: var(--accent-warm);
+    margin-bottom: 20px;
+    border-left: 4px solid var(--accent-warm);
+    padding-left: 15px;
+    font-weight: 400;
+    font-size: 1.4em;
+}
+
+.prompts-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.prompt-item {
+    background: var(--bg-primary);
+    border: 1px solid var(--accent-subtle);
+    border-radius: 8px;
+    padding: 20px;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.prompt-item:nth-child(1) {
+    border-left: 4px solid var(--accent-warm);
+}
+
+.prompt-item:nth-child(2) {
+    border-left: 4px solid var(--accent-mint);
+}
+
+.prompt-item:nth-child(3) {
+    border-left: 4px solid var(--accent-cool);
+}
+
+.prompt-item:nth-child(4) {
+    border-left: 4px solid var(--accent-coral);
+}
+
+.prompt-item:hover {
+    border-color: var(--accent-primary);
+    box-shadow: 0 4px 12px var(--shadow-medium);
+    transform: translateY(-2px);
+}
+
+.prompt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.prompt-number {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
+.prompt-item:nth-child(1) .prompt-number {
+    background: var(--accent-warm);
+}
+
+.prompt-item:nth-child(2) .prompt-number {
+    background: var(--accent-mint);
+}
+
+.prompt-item:nth-child(3) .prompt-number {
+    background: var(--accent-cool);
+}
+
+.prompt-item:nth-child(4) .prompt-number {
+    background: var(--accent-coral);
+}
+
+.prompt-type {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    font-style: italic;
+}
+
+.prompt-text {
+    color: var(--text-primary);
+    line-height: 1.7;
+    font-size: 1.05em;
+}
+
+/* LLM Prompt Section */
+.llm-prompt-section {
+    margin-bottom: 30px;
+    background: var(--bg-secondary);
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px var(--shadow-medium);
+    border-left: 4px solid var(--accent-coral);
+}
+
+.prompt-placeholder {
+    text-align: center;
+    padding: 20px 0;
+}
+
+.loading-indicator {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.loading-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent-coral);
+    border-radius: 50%;
+    animation: loading-bounce 1.4s ease-in-out infinite both;
+}
+
+.loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes loading-bounce {
+    0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+.generate-prompt-btn, .regenerate-btn {
+    background: var(--accent-coral);
+    color: var(--bg-primary);
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-family: 'Source Sans Pro', sans-serif;
+    font-weight: 600;
+    font-size: 1em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 15px;
+}
+
+.generate-prompt-btn:hover, .regenerate-btn:hover {
+    background: #c49464;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+}
+
+.generated-prompt {
+    padding: 0;
+}
+
+.generated-prompt .prompt-text {
+    color: var(--text-primary);
+    line-height: 1.7;
+    font-size: 1.1em;
+    margin-bottom: 20px;
+    padding: 20px;
+    background: var(--input-bg);
+    border-radius: 8px;
+    border-left: 4px solid var(--accent-coral);
+}
+
+.entry-section {
+    background: var(--bg-secondary);
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px var(--shadow-medium);
+    margin-bottom: 30px;
+}
+
+#journal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+#journal-content {
+    background: var(--input-bg);
+    border: 2px solid var(--input-border);
+    border-radius: 8px;
+    padding: 20px;
+    color: var(--text-primary);
+    font-family: 'Source Sans Pro', sans-serif;
+    font-size: 1.1em;
+    line-height: 1.7;
+    resize: vertical;
+    min-height: 350px;
+    transition: all 0.3s ease;
+}
+
+#journal-content:focus {
+    outline: none;
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px rgba(126, 179, 179, 0.2);
+    background: var(--bg-secondary);
+}
+
+.entry-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.save-btn {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-family: 'Source Sans Pro', sans-serif;
+    font-weight: 600;
+    font-size: 1.1em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.save-btn:hover {
+    background: #66a3a3;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(126, 179, 179, 0.3);
+}
+
+.auto-save-toggle {
+    background: var(--accent-cool);
+    color: var(--bg-primary);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-family: 'Source Sans Pro', sans-serif;
+    font-weight: 500;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.auto-save-toggle[data-enabled="false"] {
+    background: var(--input-border);
+    color: var(--text-primary);
+}
+
+.journal-nav {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 2px solid var(--input-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.date-nav {
+    display: flex;
+    gap: 15px;
+}
+
+.nav-link {
+    background: var(--input-bg);
+    color: var(--text-primary);
+    text-decoration: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-family: 'Source Sans Pro', sans-serif;
+    font-weight: 500;
+    border: 2px solid var(--input-border);
+    transition: all 0.3s ease;
+}
+
+.nav-link:hover {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border-color: var(--accent-primary);
+    transform: translateY(-1px);
+}
+
+/* Prompt Navigation Styles */
+.prompts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.prompt-navigation {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.nav-btn {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: var(--accent-secondary);
+    transform: translateY(-1px);
+}
+
+.nav-btn:disabled {
+    background: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.prompt-counter {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    font-weight: 500;
+    min-width: 60px;
+    text-align: center;
+}
+
+.generate-first-prompt-btn {
+    background: var(--accent-coral);
+    color: var(--bg-primary);
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.generate-first-prompt-btn:hover {
+    background: var(--accent-warm);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px var(--shadow-medium);
+}
+
+.current-prompt-container {
+    position: relative;
+    min-height: 150px;
+}
+
+.no-prompts-message {
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 40px 20px;
+}
+
+.loading-prompt .prompt-text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+
+.loading-prompt .loading-indicator {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+}
+
+.loading-prompt .loading-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent-coral);
+    border-radius: 50%;
+    animation: loading-bounce 1.4s ease-in-out infinite both;
+}
+
+.loading-prompt .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-prompt .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes loading-bounce {
+    0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+/* Mobile responsiveness */
+@media (max-width: 600px) {
+    .journal-container {
+        padding: 10px;
+    }
+    
+    .date-display {
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .journal-nav {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .date-nav {
+        justify-content: center;
+    }
+    
+    .entry-actions {
+        justify-content: center;
+    }
+}
+</style>
+
+<script>
+// Navigation function (global scope)
+function navigateToDate(dateString) {
+    // Convert YYYY-MM-DD to a Date object
+    const selectedDate = new Date(dateString + 'T00:00:00');
+    
+    // We need to call the server to convert this Gregorian date to a cycle date
+    // For now, we'll use a simple approach and let the server handle the conversion
+    // by passing the date as a parameter
+    const url = `/journal?gregorian_date=${dateString}`;
+    console.log('Navigating to:', url); // Debug log
+    window.location.href = url;
+}
+
+// LLM Prompt Generation
+async function generateLLMPrompt() {
+    const placeholder = document.querySelector('.prompt-placeholder');
+    const generated = document.querySelector('.generated-prompt');
+    const promptText = document.querySelector('.generated-prompt .prompt-text');
+    
+    // Show loading state
+    placeholder.style.display = 'block';
+    generated.style.display = 'none';
+    
+    try {
+        // Get the entry type from the page
+        const entryType = document.querySelector('.entry-type').textContent;
+        const cycleDate = document.querySelector('.cycle-date').textContent;
+        
+        // Call the LLM endpoint
+        const response = await fetch('/journal/generate-prompt', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                entry_type: entryType,
+                cycle_date: cycleDate
+            })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            promptText.textContent = data.prompt;
+            
+            placeholder.style.display = 'none';
+            generated.style.display = 'block';
+        } else {
+            throw new Error('Failed to generate prompt');
+        }
+    } catch (error) {
+        console.error('Error generating prompt:', error);
+        
+        // Fall back to sample prompts
+        const samplePrompts = [
+            "Reflect on a moment today when you felt most present and engaged. What made that experience special?",
+            "What challenge did you navigate today, and what did you learn about yourself in the process?",
+            "Describe something you noticed today that you might have overlooked before. How did it make you feel?",
+            "What conversation or interaction today left the biggest impression on you? Why?",
+            "If you could send a message to your past self from this morning, what would you say?"
+        ];
+        
+        const randomPrompt = samplePrompts[Math.floor(Math.random() * samplePrompts.length)];
+        promptText.textContent = randomPrompt;
+        
+        placeholder.style.display = 'none';
+        generated.style.display = 'block';
+    }
+}
+
+// Prompt Navigation
+let currentPromptNumber = 1;
+let maxPrompts = '{% if prompts.len() > 0 %}{{ prompts.len() }}{% else %}0{% endif %}';
+let cycleDate = '{{ cycle_date }}';
+
+async function navigatePrompt(direction) {
+    const newPromptNumber = direction === 'next' ? currentPromptNumber + 1 : currentPromptNumber - 1;
+    
+    // Navigate to existing prompt
+    const existingPrompt = document.getElementById(`prompt-${newPromptNumber}`);
+    if (existingPrompt) {
+        showPrompt(newPromptNumber);
+        updateNavigation(newPromptNumber, newPromptNumber > 1, newPromptNumber < maxPrompts);
+    }
+}
+
+function showPrompt(promptNumber) {
+    // Hide all prompts
+    const allPrompts = document.querySelectorAll('.prompt-item:not(.loading-prompt)');
+    allPrompts.forEach(prompt => prompt.style.display = 'none');
+    
+    // Show the selected prompt
+    const targetPrompt = document.getElementById(`prompt-${promptNumber}`);
+    if (targetPrompt) {
+        targetPrompt.style.display = 'block';
+        currentPromptNumber = promptNumber;
+    }
+}
+
+function updateNavigation(promptNumber, hasPrev, hasNext) {
+    const prevBtn = document.getElementById('prev-prompt');
+    const nextBtn = document.getElementById('next-prompt');
+    const counter = document.getElementById('prompt-counter');
+    
+    currentPromptNumber = promptNumber;
+    
+    // Update counter
+    counter.textContent = `${promptNumber} of ${Math.max(maxPrompts, promptNumber)}`;
+    
+    // Update button states
+    prevBtn.disabled = !hasPrev;
+    
+    // Check if we're on the last prompt
+    const isOnLastPrompt = promptNumber >= maxPrompts;
+    
+    if (isOnLastPrompt) {
+        // Change to "Another..." button
+        nextBtn.textContent = 'Another...';
+        nextBtn.disabled = false;
+        nextBtn.onclick = () => generateAnotherPrompt();
+    } else {
+        // Regular "Next" button
+        nextBtn.textContent = 'Next →';
+        nextBtn.disabled = !hasNext;
+        nextBtn.onclick = () => navigatePrompt('next');
+    }
+}
+
+function showLoadingPrompt() {
+    const loadingPrompt = document.getElementById('loading-prompt');
+    const allPrompts = document.querySelectorAll('.prompt-item:not(.loading-prompt)');
+    
+    allPrompts.forEach(prompt => prompt.style.display = 'none');
+    loadingPrompt.style.display = 'block';
+    
+    // Disable navigation during loading
+    document.getElementById('prev-prompt').disabled = true;
+    document.getElementById('next-prompt').disabled = true;
+}
+
+function hideLoadingPrompt() {
+    const loadingPrompt = document.getElementById('loading-prompt');
+    loadingPrompt.style.display = 'none';
+}
+
+function createPromptElement(promptNumber, promptText, promptType) {
+    const container = document.querySelector('.current-prompt-container');
+    const loadingPrompt = document.getElementById('loading-prompt');
+    
+    const promptElement = document.createElement('div');
+    promptElement.className = 'prompt-item';
+    promptElement.id = `prompt-${promptNumber}`;
+    promptElement.style.display = 'none';
+    
+    promptElement.innerHTML = `
+        <div class="prompt-header">
+            <span class="prompt-number">Prompt ${promptNumber}</span>
+            <span class="prompt-type">${promptType}</span>
+        </div>
+        <div class="prompt-text">${promptText}</div>
+    `;
+    
+    // Insert before loading prompt
+    container.insertBefore(promptElement, loadingPrompt);
+}
+
+function showGenerationSuccess() {
+    // Create a temporary success indicator
+    const successIndicator = document.createElement('div');
+    successIndicator.className = 'generation-success';
+    successIndicator.textContent = '✨ New prompt generated!';
+    successIndicator.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: var(--accent-mint);
+        color: var(--bg-primary);
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        z-index: 1000;
+        animation: slideInRight 0.3s ease-out;
+    `;
+    
+    document.body.appendChild(successIndicator);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        successIndicator.style.animation = 'slideOutRight 0.3s ease-in';
+        setTimeout(() => successIndicator.remove(), 300);
+    }, 3000);
+}
+
+async function generateFirstPrompt() {
+    const button = document.querySelector('.generate-first-prompt-btn');
+    const originalText = button.textContent;
+    
+    button.textContent = 'Generating...';
+    button.disabled = true;
+    
+    try {
+        const response = await fetch('/journal/navigate-prompt', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                cycle_date: cycleDate,
+                current_prompt: 0,
+                direction: 'next'
+            })
+        });
+        
+        if (response.ok) {
+            // Reload the page to show the new prompt
+            window.location.reload();
+        } else {
+            alert('Failed to generate prompt. Please try again.');
+            button.textContent = originalText;
+            button.disabled = false;
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Network error. Please try again.');
+        button.textContent = originalText;
+        button.disabled = false;
+    }
+}
+
+async function generateAnotherPrompt() {
+    const nextBtn = document.getElementById('next-prompt');
+    const originalText = nextBtn.textContent;
+    
+    // Show loading state
+    nextBtn.textContent = 'Generating...';
+    nextBtn.disabled = true;
+    
+    // Show loading prompt
+    showLoadingPrompt();
+    
+    try {
+        const response = await fetch('/journal/navigate-prompt', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                cycle_date: cycleDate,
+                current_prompt: currentPromptNumber,
+                direction: 'next'
+            })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            hideLoadingPrompt();
+            
+            if (data.prompt) {
+                // Create new prompt element
+                createPromptElement(data.prompt_number, data.prompt, data.prompt_type);
+                maxPrompts = Math.max(maxPrompts, data.prompt_number);
+                
+                // Navigate to the new prompt
+                showPrompt(data.prompt_number);
+                updateNavigation(data.prompt_number, data.prompt_number > 1, false);
+                
+                // Show success indicator
+                showGenerationSuccess();
+            } else {
+                alert('Failed to generate new prompt. Please try again.');
+                // Restore button state
+                nextBtn.textContent = originalText;
+                nextBtn.disabled = false;
+            }
+        } else {
+            hideLoadingPrompt();
+            alert('Error generating prompt. Please try again.');
+            // Restore button state
+            nextBtn.textContent = originalText;
+            nextBtn.disabled = false;
+        }
+    } catch (error) {
+        hideLoadingPrompt();
+        console.error('Error:', error);
+        alert('Network error. Please try again.');
+        // Restore button state
+        nextBtn.textContent = originalText;
+        nextBtn.disabled = false;
+    }
+}
+
+// Initialize prompt navigation on page load
+document.addEventListener('DOMContentLoaded', function() {
+    if (maxPrompts > 0) {
+        updateNavigation(1, false, 1 < maxPrompts);
+    }
+    
+    // Calendar date picker functionality
+    const datePicker = document.getElementById('date-picker');
+    
+    if (datePicker) {
+        // Date picker already has the correct value from the server
+        // When a date is actually selected (not just clicked), navigate to that date
+        datePicker.addEventListener('change', function() {
+            console.log('Date selected:', this.value); // Debug log
+            if (this.value) {
+                // Small delay to ensure the picker has closed
+                setTimeout(() => {
+                    navigateToDate(this.value);
+                }, 100);
+            }
+        });
+    }
+    
+    // Auto-save functionality
+    const content = document.getElementById('journal-content');
+    const toggleBtn = document.querySelector('.auto-save-toggle');
+    
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', function() {
+            autoSaveEnabled = !autoSaveEnabled;
+            this.textContent = autoSaveEnabled ? 'Auto-save: ON' : 'Auto-save: OFF';
+            this.setAttribute('data-enabled', autoSaveEnabled);
+            
+            if (autoSaveEnabled) {
+                scheduleAutoSave();
+            } else if (autoSaveTimer) {
+                clearTimeout(autoSaveTimer);
+                autoSaveTimer = null;
+            }
+        });
+    }
+    
+    if (content && autoSaveEnabled) {
+        content.addEventListener('input', scheduleAutoSave);
+    }
+});
+
+function scheduleAutoSave() {
+    if (!autoSaveEnabled) return;
+    
+    if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+    }
+    
+    autoSaveTimer = setTimeout(async function() {
+        const content = document.getElementById('journal-content');
+        if (!content || !content.value.trim()) return;
+        
+        try {
+            const response = await fetch('/journal/entry', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'content=' + encodeURIComponent(content.value)
+            });
+            
+            if (response.ok) {
+                // Visual feedback for successful save
+                content.style.borderColor = 'var(--accent-mint)';
+                setTimeout(() => {
+                    content.style.borderColor = 'var(--input-border)';
+                }, 1000);
+            }
+        } catch (error) {
+            console.error('Auto-save failed:', error);
+        }
+    }, 2000); // Auto-save after 2 seconds of inactivity
+}
+</script>
+{% endblock %}

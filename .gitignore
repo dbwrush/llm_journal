@@ -1,0 +1,70 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project-specific data and logs
+journal_entries/
+OllamaLogs/
+static/
+tokens.json
+
+# Configuration files (keep examples, ignore actual config)
+config.toml
+*.log
+
+# Example/demo files
+basic_chatbot.rs
+ollama-rs-readme.md
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Local environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Rust analyzer cache
+.rust-analyzer/
+
+# Coverage reports
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# Benchmarking
+criterion/
+
+# Flamegraph
+flamegraph.svg
+perf.data*
+
+# LLM model files (if stored locally)
+*.bin
+*.gguf
+*.safetensors
+models/
+
+# Test artifacts
+test-results/
