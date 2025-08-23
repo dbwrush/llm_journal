@@ -4,7 +4,7 @@ mod cycle_date;
 mod file_manager;
 mod handlers;
 mod journal;
-// mod journal_processor; // TODO: Re-enable when scheduling is implemented
+mod journal_processor;
 mod llm_worker;
 mod prompt_generator;
 
@@ -15,9 +15,9 @@ use auth::AuthManager;
 use config::Config;
 use file_manager::TokensFileManager;
 use handlers::create_routes;
-// use journal::JournalManager; // TODO: Re-enable when journal is complete
-// use journal_processor::JournalProcessor; // TODO: Re-enable when scheduling is implemented  
-// use llm_worker::LlmManager; // TODO: Re-enable when LLM integration is ready
+use journal::JournalManager;
+use journal_processor::JournalProcessor;
+use llm_worker::LlmManager;
 
 /// Shared application state
 #[derive(Clone)]
@@ -54,47 +54,6 @@ async fn main() {
         tracing::info!("📁 Journal directory ready: {}", config.journal.journal_directory);
     }
     
-    // Initialize LLM manager
-    // TODO: Re-enable when LLM integration is ready
-    /*
-    let llm_manager = match llm_worker::LlmManager::new(config.llm.model_name.clone()) {
-        Ok(manager) => {
-            tracing::info!("🤖 LLM manager initialized for model: {}", config.llm.model_name);
-            Arc::new(manager)
-        }
-        Err(e) => {
-            tracing::error!("❌ Failed to initialize LLM manager: {}", e);
-            tracing::warn!("⚠️  Journal prompts will not be generated automatically");
-            return;
-        }
-    };
-    */
-    
-    // Initialize journal processor for background tasks
-    // TODO: Re-enable when scheduling issues are resolved
-    /*
-    let journal_processor = match journal_processor::JournalProcessor::new(
-        journal_manager.clone(),
-        llm_manager.clone(),
-        config.clone(),
-    ).await {
-        Ok(processor) => {
-            tracing::info!("⏰ Journal processor initialized");
-            processor
-        }
-        Err(e) => {
-            tracing::error!("❌ Failed to initialize journal processor: {}", e);
-            return;
-        }
-    };
-    
-    // Start the background journal processing
-    if let Err(e) = journal_processor.start().await {
-        tracing::error!("❌ Failed to start journal processor: {}", e);
-        tracing::warn!("⚠️  Background journal processing disabled");
-    }
-    */
-    
     match tokens_file_manager.load_sessions().await {
         Ok(sessions_data) => {
             auth_manager.load_sessions(&sessions_data).await;
@@ -106,30 +65,59 @@ async fn main() {
         }
     }
 
-    // Initialize LLM manager and prompt generator (without startup test)
-    let prompt_generator = match crate::llm_worker::LlmManager::new(config.llm.model_path.clone()) {
-        Ok(llm_manager) => {
-            let llm_manager = Arc::new(llm_manager);
-            
-            // Initialize prompt generator
-            let prompt_generator = Arc::new(crate::prompt_generator::PromptGenerator::new(
-                journal_manager.clone(),
-                llm_manager.clone(),
-                config.clone(),
-            ));
-            
-            // Start the prompt generator service
-            if let Err(e) = prompt_generator.start().await {
-                tracing::error!("❌ Failed to start prompt generator: {}", e);
-                None
-            } else {
-                tracing::info!("🎯 Prompt generator service started successfully");
-                Some(prompt_generator)
-            }
+    // Initialize LLM manager first (shared by journal processor and prompt generator)
+    let llm_manager = match LlmManager::new(config.llm.model_path.clone()) {
+        Ok(manager) => {
+            tracing::info!("🤖 LLM manager initialized");
+            Arc::new(manager)
         }
         Err(e) => {
-            tracing::error!("❌ Failed to create LLM manager: {}", e);
+            tracing::error!("❌ Failed to initialize LLM manager: {}", e);
+            tracing::warn!("⚠️  Journal processing and prompts will not be generated automatically");
+            std::process::exit(1);
+        }
+    };
+
+    // Initialize journal processor for background tasks
+    let journal_processor = match JournalProcessor::new(
+        journal_manager.clone(),
+        llm_manager.clone(),
+        config.clone(),
+    ).await {
+        Ok(processor) => {
+            tracing::info!("⏰ Journal processor initialized");
+            processor
+        }
+        Err(e) => {
+            tracing::error!("❌ Failed to initialize journal processor: {}", e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Start the background journal processing
+    if let Err(e) = journal_processor.start().await {
+        tracing::error!("❌ Failed to start journal processor: {}", e);
+        tracing::warn!("⚠️  Background journal processing disabled");
+    } else {
+        tracing::info!("🔄 Background journal processing started");
+    }
+
+    // Initialize prompt generator using the shared LLM manager
+    let prompt_generator = {
+        // Initialize prompt generator
+        let prompt_generator = Arc::new(crate::prompt_generator::PromptGenerator::new(
+            journal_manager.clone(),
+            llm_manager.clone(),
+            config.clone(),
+        ));
+        
+        // Start the prompt generator service
+        if let Err(e) = prompt_generator.start().await {
+            tracing::error!("❌ Failed to start prompt generator: {}", e);
             None
+        } else {
+            tracing::info!("🎯 Prompt generator service started successfully");
+            Some(prompt_generator)
         }
     };
 

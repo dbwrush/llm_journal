@@ -120,14 +120,26 @@ async fn process_journal_tasks(
     let entries_needing_summaries = journal_manager.find_entries_needing_summaries().await.map_err(|e| e.to_string())?;
     
     for cycle_date in entries_needing_summaries {
-        if let Ok(Some(entry)) = journal_manager.load_entry(&cycle_date).await {
-            tracing::info!("📝 Generating summary for {}", cycle_date);
-            
-            let summary = llm_worker.generate_summary(&entry.content, &cycle_date).await.map_err(|e| e.to_string())?;
-            journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
-            
-            tracing::info!("✅ Summary saved for {}", cycle_date);
-        }
+        // Convert the result to avoid Send issues
+        let entry_content = match journal_manager.load_entry(&cycle_date).await {
+            Ok(Some(entry)) => {
+                tracing::info!("📝 Generating summary for {}", cycle_date);
+                entry.content
+            }
+            Ok(None) => {
+                tracing::warn!("⚠️  No entry found for {}", cycle_date);
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to load entry for {}: {}", cycle_date, e);
+                continue;
+            }
+        };
+        
+        let summary = llm_worker.generate_summary(&entry_content, &cycle_date).await.map_err(|e| e.to_string())?;
+        journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
+        
+        tracing::info!("✅ Summary saved for {}", cycle_date);
     }
     
     // Step 3: Generate prompts for tomorrow
@@ -163,10 +175,6 @@ async fn process_journal_tasks(
         
         tracing::info!("✅ Prompt {} saved for {}", prompt_number, tomorrow);
     }
-    
-    // Step 4: Unload the LLM model to free GPU memory
-    tracing::info!("🔄 Unloading LLM model...");
-    llm_manager.cleanup_after_processing().await;
     
     tracing::info!("✅ Nightly journal processing completed successfully");
     Ok(())

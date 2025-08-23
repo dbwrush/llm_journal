@@ -147,6 +147,13 @@ impl PromptGenerator {
         llm_manager.prepare_for_processing().await.map_err(|e| e.to_string())?;
         let llm_worker = llm_manager.get_worker();
 
+        // Generate any missing summaries first (so they're available as context)
+        tracing::info!("🔄 Checking for entries that need summaries...");
+        if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker).await {
+            tracing::warn!("⚠️  Failed to generate some summaries: {}", e);
+            // Continue anyway - prompts can still be generated without perfect context
+        }
+
         // Determine prompt type based on today's position in the cycle
         let prompt_type = if today.is_first_day_of_year() {
             PromptType::YearlyReflection
@@ -158,7 +165,7 @@ impl PromptGenerator {
             PromptType::Daily
         };
 
-        // Get context for prompt generation
+        // Get context for prompt generation (now with fresh summaries available)
         let context = journal_manager.get_context_for_prompt(&today).await.map_err(|e| e.to_string())?;
 
         // Generate the missing prompts
@@ -347,6 +354,47 @@ impl PromptGenerator {
         } else {
             tracing::info!("⏰ Startup check: Current time ({}) is before prompt generation time ({}), will wait", 
                 current_time.format("%H:%M"), target_time.format("%H:%M"));
+        }
+        
+        Ok(())
+    }
+
+    /// Generate summaries for entries that don't have them yet
+    async fn generate_missing_summaries(
+        journal_manager: &Arc<JournalManager>,
+        llm_worker: &Arc<crate::llm_worker::LlmWorker>,
+    ) -> Result<(), String> {
+        // Find entries that need summaries
+        let entries_needing_summaries = journal_manager.find_entries_needing_summaries().await.map_err(|e| e.to_string())?;
+        
+        if entries_needing_summaries.is_empty() {
+            tracing::info!("✅ All entries already have summaries");
+            return Ok(());
+        }
+        
+        tracing::info!("📝 Found {} entries needing summaries", entries_needing_summaries.len());
+        
+        for cycle_date in entries_needing_summaries {
+            // Convert the result to avoid Send issues  
+            let entry_content = match journal_manager.load_entry(&cycle_date).await {
+                Ok(Some(entry)) => {
+                    tracing::info!("📝 Generating summary for {}", cycle_date);
+                    entry.content
+                }
+                Ok(None) => {
+                    tracing::warn!("⚠️  No entry found for {}", cycle_date);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to load entry for {}: {}", cycle_date, e);
+                    continue;
+                }
+            };
+            
+            let summary = llm_worker.generate_summary(&entry_content, &cycle_date).await.map_err(|e| e.to_string())?;
+            journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
+            
+            tracing::info!("✅ Summary saved for {}", cycle_date);
         }
         
         Ok(())

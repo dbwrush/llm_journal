@@ -35,5 +35,9 @@ askama = "0.14"
 
 # LLM Integration via Ollama (headless, supports AMD GPU)
 ollama-rs = "0.3.2"
+tokio-cron-scheduler = "0.14.0"
+
+[dev-dependencies]
+tempfile = "3.21.0"
 # Background scheduling - temporarily disabled for initial version
 # tokio-cron-scheduler = "0.10"
