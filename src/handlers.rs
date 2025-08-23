@@ -59,6 +59,7 @@ pub fn create_routes() -> Router<AppState> {
         .route("/journal/entry.json", get(get_journal_entry_json))
         .route("/journal/generate-prompt", post(generate_prompt_endpoint))
         .route("/journal/navigate-prompt", post(navigate_prompt_endpoint))
+        .route("/journal/check-prompt-status", post(check_prompt_status_endpoint))
         .nest_service("/static", ServeDir::new("static"))
 }
 
@@ -558,6 +559,15 @@ async fn navigate_prompt_endpoint(
             tracing::info!("🔄 Navigation request: current_prompt={}, direction={}, cycle_date={}", 
                 form.current_prompt, form.direction, form.cycle_date);
             
+            // Parse cycle date
+            let cycle_date = match crate::cycle_date::CycleDate::from_string(&form.cycle_date) {
+                Ok(date) => date,
+                Err(e) => {
+                    tracing::error!("Invalid cycle date: {}", e);
+                    return (StatusCode::BAD_REQUEST, "Invalid cycle date").into_response();
+                }
+            };
+            
             // Calculate new prompt number based on direction
             let new_prompt_number = match form.direction.as_str() {
                 "next" => form.current_prompt + 1,
@@ -573,25 +583,174 @@ async fn navigate_prompt_endpoint(
                 }
             };
 
-            let response = PromptNavigationResponse {
-                prompt: Some(format!("Generated prompt #{} for {}", new_prompt_number, form.cycle_date)),
-                prompt_number: new_prompt_number,
-                prompt_type: "Daily".to_string(),
-                has_prev: new_prompt_number > 1,
-                has_next: true,
-                generated_new: true,
+            // Check if the prompt file already exists
+            let prompt_path = if new_prompt_number <= 3 {
+                format!("journal_entries/{}/prompt_{}.txt", cycle_date.to_string(), new_prompt_number)
+            } else {
+                // For prompts beyond 3, use the flat file format
+                format!("journal_entries/{}_prompt{}.txt", cycle_date.to_string(), new_prompt_number)
             };
             
-            match serde_json::to_string(&response) {
-                Ok(json) => {
-                    return Response::builder()
-                        .header("Content-Type", "application/json")
-                        .body(json.into())
-                        .unwrap();
+            if std::path::Path::new(&prompt_path).exists() {
+                // Prompt already exists, read and return it
+                match std::fs::read_to_string(&prompt_path) {
+                    Ok(prompt_content) => {
+                        let response = PromptNavigationResponse {
+                            prompt: Some(prompt_content.trim().to_string()),
+                            prompt_number: new_prompt_number,
+                            prompt_type: "Daily".to_string(),
+                            has_prev: new_prompt_number > 1,
+                            has_next: true,
+                            generated_new: false,
+                        };
+                        
+                        match serde_json::to_string(&response) {
+                            Ok(json) => {
+                                return Response::builder()
+                                    .header("Content-Type", "application/json")
+                                    .body(json.into())
+                                    .unwrap();
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to serialize navigation response: {}", e);
+                                return (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error").into_response();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to read existing prompt file: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read prompt").into_response();
+                    }
                 }
+            } else {
+                // Prompt doesn't exist, start background generation
+                tracing::info!("🚀 Starting background generation for prompt #{}", new_prompt_number);
+                
+                // Queue prompt generation in background
+                if let Some(prompt_generator) = &app_state.prompt_generator {
+                    prompt_generator.queue_prompt_generation(cycle_date, new_prompt_number as u8);
+                } else {
+                    tracing::error!("Prompt generator not available");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Prompt generator not available").into_response();
+                }
+                
+                // Return "generating" status immediately
+                let response = PromptNavigationResponse {
+                    prompt: None, // No prompt content yet
+                    prompt_number: new_prompt_number,
+                    prompt_type: "Daily".to_string(),
+                    has_prev: new_prompt_number > 1,
+                    has_next: true,
+                    generated_new: true, // Indicates generation in progress
+                };
+                
+                match serde_json::to_string(&response) {
+                    Ok(json) => {
+                        return Response::builder()
+                            .header("Content-Type", "application/json")
+                            .body(json.into())
+                            .unwrap();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to serialize navigation response: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error").into_response();
+                    }
+                }
+            }
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+}
+
+/// Form for checking prompt status
+#[derive(Deserialize)]
+pub struct PromptStatusForm {
+    pub cycle_date: String,
+    pub prompt_number: u32,
+}
+
+/// Response for prompt status check
+#[derive(serde::Serialize)]
+pub struct PromptStatusResponse {
+    pub ready: bool,
+    pub prompt: Option<String>,
+}
+
+/// Check if a prompt is ready (for polling by frontend)
+async fn check_prompt_status_endpoint(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Json(form): Json<PromptStatusForm>,
+) -> Response {
+    // Extract token from cookie
+    let token = extract_session_token(&headers);
+
+    // Check if authenticated
+    if let Some(token) = token {
+        if app_state.auth_manager.validate_session(&token).await {
+            // Parse cycle date
+            let cycle_date = match crate::cycle_date::CycleDate::from_string(&form.cycle_date) {
+                Ok(date) => date,
                 Err(e) => {
-                    tracing::error!("Failed to serialize navigation response: {}", e);
-                    return (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error").into_response();
+                    tracing::error!("Invalid cycle date: {}", e);
+                    return (StatusCode::BAD_REQUEST, "Invalid cycle date").into_response();
+                }
+            };
+
+            // Check if the prompt file exists
+            let prompt_path = if form.prompt_number <= 3 {
+                format!("journal_entries/{}/prompt_{}.txt", cycle_date.to_string(), form.prompt_number)
+            } else {
+                // For prompts beyond 3, use the flat file format
+                format!("journal_entries/{}_prompt{}.txt", cycle_date.to_string(), form.prompt_number)
+            };
+            
+            if std::path::Path::new(&prompt_path).exists() {
+                // Prompt is ready, read and return it
+                match std::fs::read_to_string(&prompt_path) {
+                    Ok(prompt_content) => {
+                        let response = PromptStatusResponse {
+                            ready: true,
+                            prompt: Some(prompt_content.trim().to_string()),
+                        };
+                        
+                        match serde_json::to_string(&response) {
+                            Ok(json) => {
+                                return Response::builder()
+                                    .header("Content-Type", "application/json")
+                                    .body(json.into())
+                                    .unwrap();
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to serialize status response: {}", e);
+                                return (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error").into_response();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to read prompt file: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read prompt").into_response();
+                    }
+                }
+            } else {
+                // Prompt not ready yet
+                let response = PromptStatusResponse {
+                    ready: false,
+                    prompt: None,
+                };
+                
+                match serde_json::to_string(&response) {
+                    Ok(json) => {
+                        return Response::builder()
+                            .header("Content-Type", "application/json")
+                            .body(json.into())
+                            .unwrap();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to serialize status response: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error").into_response();
+                    }
                 }
             }
         }

@@ -244,6 +244,79 @@ impl PromptGenerator {
         Ok(())
     }
 
+    /// Queue prompt generation asynchronously without waiting for completion
+    /// This is ideal for triggering prompt generation from web handlers without blocking the response
+    pub fn queue_prompt_generation(&self, cycle_date: CycleDate, prompt_number: u8) {
+        let journal_manager = Arc::clone(&self.journal_manager);
+        let llm_manager = Arc::clone(&self.llm_manager);
+        
+        tracing::info!("🚀 Queuing prompt {} generation for {} (async)", prompt_number, cycle_date);
+        
+        // Spawn a background task to handle the generation
+        tokio::spawn(async move {
+            // Remove the max_prompts_per_day limitation for unlimited prompts
+            if let Ok(Some(_)) = journal_manager.load_prompt(&cycle_date, prompt_number).await {
+                tracing::debug!("✅ Prompt {} already exists for {}, skipping", prompt_number, cycle_date);
+                return;
+            }
+
+            tracing::info!("🔄 Generating queued prompt {} for {}", prompt_number, cycle_date);
+            
+            match Self::generate_single_prompt(
+                journal_manager, 
+                llm_manager, 
+                &cycle_date, 
+                prompt_number
+            ).await {
+                Ok(()) => {
+                    tracing::info!("✅ Successfully generated queued prompt {} for {}", prompt_number, cycle_date);
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to generate queued prompt {} for {}: {}", prompt_number, cycle_date, e);
+                }
+            }
+        });
+    }
+
+    /// Generate a single prompt (helper method for async generation)
+    async fn generate_single_prompt(
+        journal_manager: Arc<JournalManager>,
+        llm_manager: Arc<LlmManager>,
+        cycle_date: &CycleDate,
+        prompt_number: u8,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Prepare the LLM
+        llm_manager.prepare_for_processing().await?;
+        let llm_worker = llm_manager.get_worker();
+
+        // Determine prompt type
+        let prompt_type = if cycle_date.is_first_day_of_year() {
+            PromptType::YearlyReflection
+        } else if cycle_date.is_first_day_of_month() {
+            PromptType::MonthlyReflection
+        } else if cycle_date.is_first_day_of_week() {
+            PromptType::WeeklyReflection
+        } else {
+            PromptType::Daily
+        };
+
+        // Get context for prompt generation
+        let context = journal_manager.get_context_for_prompt(cycle_date).await?;
+
+        // Generate the prompt
+        let prompt = llm_worker.generate_prompt(
+            cycle_date,
+            &context,
+            prompt_number,
+            prompt_type,
+        ).await?;
+        
+        // Save the prompt
+        journal_manager.save_prompt(&prompt).await?;
+        
+        Ok(())
+    }
+
     /// Check if we're past the prompt generation time for today and generate prompts if needed
     async fn check_and_generate_startup_prompts(
         journal_manager: Arc<JournalManager>,

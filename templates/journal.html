@@ -867,10 +867,10 @@ async function generateAnotherPrompt() {
         
         if (response.ok) {
             const data = await response.json();
-            hideLoadingPrompt();
             
             if (data.prompt) {
-                // Create new prompt element
+                // Prompt is ready immediately
+                hideLoadingPrompt();
                 createPromptElement(data.prompt_number, data.prompt, data.prompt_type);
                 maxPrompts = Math.max(maxPrompts, data.prompt_number);
                 
@@ -880,7 +880,12 @@ async function generateAnotherPrompt() {
                 
                 // Show success indicator
                 showGenerationSuccess();
+            } else if (data.generated_new) {
+                // Prompt is being generated, start polling
+                console.log('Prompt generation started, beginning polling...');
+                pollForPrompt(data.prompt_number);
             } else {
+                hideLoadingPrompt();
                 alert('Failed to generate new prompt. Please try again.');
                 // Restore button state
                 nextBtn.textContent = originalText;
@@ -901,6 +906,84 @@ async function generateAnotherPrompt() {
         nextBtn.textContent = originalText;
         nextBtn.disabled = false;
     }
+}
+
+async function pollForPrompt(promptNumber) {
+    const maxAttempts = 24; // 24 attempts * 5 seconds = 2 minutes timeout
+    let attempts = 0;
+    
+    const poll = async () => {
+        attempts++;
+        console.log(`Polling attempt ${attempts}/${maxAttempts} for prompt ${promptNumber}`);
+        
+        try {
+            const response = await fetch('/journal/check-prompt-status', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    cycle_date: cycleDate,
+                    prompt_number: promptNumber
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                
+                if (data.ready && data.prompt) {
+                    // Prompt is ready!
+                    console.log('Prompt generation completed!');
+                    hideLoadingPrompt();
+                    
+                    // Create and show the new prompt
+                    createPromptElement(promptNumber, data.prompt, 'Daily');
+                    maxPrompts = Math.max(maxPrompts, promptNumber);
+                    
+                    // Navigate to the new prompt
+                    showPrompt(promptNumber);
+                    updateNavigation(promptNumber, promptNumber > 1, false);
+                    
+                    // Show success indicator
+                    showGenerationSuccess();
+                    return; // Stop polling
+                } else {
+                    // Not ready yet, continue polling
+                    if (attempts < maxAttempts) {
+                        setTimeout(poll, 5000); // Poll again in 5 seconds
+                    } else {
+                        // Timeout reached
+                        hideLoadingPrompt();
+                        console.error('Prompt generation timed out');
+                        alert('Prompt generation is taking longer than expected. Please try again.');
+                        
+                        // Restore button state
+                        const nextBtn = document.getElementById('next-prompt');
+                        nextBtn.textContent = 'Another...';
+                        nextBtn.disabled = false;
+                    }
+                }
+            } else {
+                throw new Error('Status check failed');
+            }
+        } catch (error) {
+            console.error('Error during polling:', error);
+            if (attempts < maxAttempts) {
+                setTimeout(poll, 5000); // Retry in 5 seconds
+            } else {
+                hideLoadingPrompt();
+                alert('Error checking prompt status. Please try again.');
+                
+                // Restore button state
+                const nextBtn = document.getElementById('next-prompt');
+                nextBtn.textContent = 'Another...';
+                nextBtn.disabled = false;
+            }
+        }
+    };
+    
+    // Start polling immediately
+    poll();
 }
 
 // Initialize prompt navigation on page load
