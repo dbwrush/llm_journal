@@ -585,10 +585,10 @@ async fn navigate_prompt_endpoint(
 
             // Check if the prompt file already exists
             let prompt_path = if new_prompt_number <= 3 {
-                format!("journal_entries/{}/prompt_{}.txt", cycle_date.to_string(), new_prompt_number)
+                format!("journal/{}/prompt{}.txt", cycle_date.to_string(), new_prompt_number)
             } else {
-                // For prompts beyond 3, use the flat file format
-                format!("journal_entries/{}_prompt{}.txt", cycle_date.to_string(), new_prompt_number)
+                // For prompts beyond 3, use the same date directory format
+                format!("journal/{}/prompt{}.txt", cycle_date.to_string(), new_prompt_number)
             };
             
             if std::path::Path::new(&prompt_path).exists() {
@@ -700,10 +700,10 @@ async fn check_prompt_status_endpoint(
 
             // Check if the prompt file exists
             let prompt_path = if form.prompt_number <= 3 {
-                format!("journal_entries/{}/prompt_{}.txt", cycle_date.to_string(), form.prompt_number)
+                format!("journal/{}/prompt{}.txt", cycle_date.to_string(), form.prompt_number)
             } else {
-                // For prompts beyond 3, use the flat file format
-                format!("journal_entries/{}_prompt{}.txt", cycle_date.to_string(), form.prompt_number)
+                // For prompts beyond 3, use the same date directory format
+                format!("journal/{}/prompt{}.txt", cycle_date.to_string(), form.prompt_number)
             };
             
             if std::path::Path::new(&prompt_path).exists() {

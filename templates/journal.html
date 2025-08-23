@@ -367,6 +367,88 @@
     border-left: 4px solid var(--accent-coral);
 }
 
+/* Markdown rendering styles for prompts */
+.prompt-text h1,
+.prompt-text h2,
+.prompt-text h3,
+.prompt-text h4,
+.prompt-text h5,
+.prompt-text h6 {
+    color: var(--accent-primary);
+    margin-top: 20px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.prompt-text h1 { font-size: 1.4em; }
+.prompt-text h2 { font-size: 1.3em; }
+.prompt-text h3 { font-size: 1.2em; }
+
+.prompt-text p {
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+
+.prompt-text strong {
+    color: var(--accent-coral);
+    font-weight: 600;
+}
+
+.prompt-text em {
+    color: var(--accent-mint);
+    font-style: italic;
+}
+
+.prompt-text ul,
+.prompt-text ol {
+    margin: 15px 0;
+    padding-left: 25px;
+}
+
+.prompt-text li {
+    margin-bottom: 8px;
+    line-height: 1.5;
+}
+
+.prompt-text blockquote {
+    border-left: 4px solid var(--accent-primary);
+    margin: 15px 0;
+    padding: 10px 20px;
+    background: rgba(126, 179, 179, 0.1);
+    font-style: italic;
+    border-radius: 0 8px 8px 0;
+}
+
+.prompt-text blockquote p {
+    margin: 0;
+}
+
+.prompt-text code {
+    background: var(--bg-primary);
+    color: var(--accent-mint);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.prompt-text pre {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 15px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 15px 0;
+    border-left: 4px solid var(--accent-primary);
+}
+
+.prompt-text hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--accent-subtle), transparent);
+    margin: 20px 0;
+}
+
 .entry-section {
     background: var(--bg-secondary);
     padding: 25px;
@@ -613,6 +695,36 @@
 </style>
 
 <script>
+// Configure marked for safe rendering
+marked.setOptions({
+    breaks: true,          // Convert line breaks to <br>
+    gfm: true,            // GitHub Flavored Markdown
+    sanitize: false,      // We trust our own content
+    smartLists: true,     // Better list handling
+    smartypants: true     // Smart quotes and dashes
+});
+
+// Function to render markdown text
+function renderMarkdown(text) {
+    if (!text) return '';
+    return marked.parse(text);
+}
+
+// Function to apply markdown rendering to a prompt element
+function applyMarkdownToPrompt(promptElement) {
+    const promptText = promptElement.querySelector('.prompt-text');
+    if (promptText && promptText.textContent) {
+        const markdownText = promptText.textContent;
+        promptText.innerHTML = renderMarkdown(markdownText);
+    }
+}
+
+// Apply markdown to all existing prompts on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const allPrompts = document.querySelectorAll('.prompt-item:not(.loading-prompt)');
+    allPrompts.forEach(applyMarkdownToPrompt);
+});
+
 // Navigation function (global scope)
 function navigateToDate(dateString) {
     // Convert YYYY-MM-DD to a Date object
@@ -686,6 +798,10 @@ async function generateLLMPrompt() {
 let currentPromptNumber = 1;
 let maxPrompts = '{% if prompts.len() > 0 %}{{ prompts.len() }}{% else %}0{% endif %}';
 let cycleDate = '{{ cycle_date }}';
+
+// Auto-save variables
+let autoSaveEnabled = true;
+let autoSaveTimer = null;
 
 async function navigatePrompt(direction) {
     const newPromptNumber = direction === 'next' ? currentPromptNumber + 1 : currentPromptNumber - 1;
@@ -766,12 +882,15 @@ function createPromptElement(promptNumber, promptText, promptType) {
     promptElement.id = `prompt-${promptNumber}`;
     promptElement.style.display = 'none';
     
+    // Render markdown for the prompt text
+    const renderedPromptText = renderMarkdown(promptText);
+    
     promptElement.innerHTML = `
         <div class="prompt-header">
             <span class="prompt-number">Prompt ${promptNumber}</span>
             <span class="prompt-type">${promptType}</span>
         </div>
-        <div class="prompt-text">${promptText}</div>
+        <div class="prompt-text">${renderedPromptText}</div>
     `;
     
     // Insert before loading prompt

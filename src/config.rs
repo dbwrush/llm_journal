@@ -77,7 +77,7 @@ impl Default for Config {
                 passcode_expiration_seconds: 600,   // 10 minutes
             },
             journal: JournalConfig {
-                journal_directory: "journal_entries".to_string(),
+                journal_directory: "journal".to_string(),
                 processing_time: "03:00".to_string(),
                 prompt_generation_time: "06:00".to_string(),
                 max_prompts_per_day: 3,
@@ -134,7 +134,7 @@ passcode_expiration_seconds = 600
 
 [journal]
 # Directory to store journal files
-journal_directory = "journal_entries"
+journal_directory = "journal"
 # Time to run nightly processing (24-hour format)
 processing_time = "03:00"
 # Time to generate daily prompts (24-hour format)

@@ -19,7 +19,7 @@ ehthumbs.db
 Thumbs.db
 
 # Project-specific data and logs
-journal_entries/
+journal/
 OllamaLogs/
 static/
 tokens.json

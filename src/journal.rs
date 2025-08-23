@@ -71,21 +71,29 @@ impl JournalManager {
         Ok(())
     }
 
+    /// Ensure that the directory for a specific date exists
+    pub async fn ensure_date_directory(&self, cycle_date: &CycleDate) -> Result<(), Box<dyn std::error::Error>> {
+        let date_dir = self.base_path.join(cycle_date.to_string());
+        fs::create_dir_all(&date_dir).await?;
+        Ok(())
+    }
+
     /// Get file paths for a given cycle date
     pub fn get_file_paths(&self, cycle_date: &CycleDate) -> JournalFilePaths {
         let date_str = cycle_date.to_string();
+        let date_dir = self.base_path.join(&date_str);
         JournalFilePaths {
-            entry: self.base_path.join(format!("{}_entry.txt", date_str)),
-            summary: self.base_path.join(format!("{}_summ.txt", date_str)),
-            prompt1: self.base_path.join(format!("{}_prompt1.txt", date_str)),
-            prompt2: self.base_path.join(format!("{}_prompt2.txt", date_str)),
-            prompt3: self.base_path.join(format!("{}_prompt3.txt", date_str)),
+            entry: date_dir.join("entry.txt"),
+            summary: date_dir.join("summary.txt"),
+            prompt1: date_dir.join("prompt1.txt"),
+            prompt2: date_dir.join("prompt2.txt"),
+            prompt3: date_dir.join("prompt3.txt"),
         }
     }
 
     /// Save a journal entry
     pub async fn save_entry(&self, entry: &JournalEntry) -> Result<(), Box<dyn std::error::Error>> {
-        self.ensure_directories().await?;
+        self.ensure_date_directory(&entry.cycle_date).await?;
         let paths = self.get_file_paths(&entry.cycle_date);
         
         let mut file = fs::File::create(&paths.entry).await?;
@@ -148,7 +156,7 @@ impl JournalManager {
 
     /// Save a journal prompt
     pub async fn save_prompt(&self, prompt: &JournalPrompt) -> Result<(), Box<dyn std::error::Error>> {
-        self.ensure_directories().await?;
+        self.ensure_date_directory(&prompt.cycle_date).await?;
         let paths = self.get_file_paths(&prompt.cycle_date);
         
         let prompt_path = match prompt.prompt_number {
@@ -156,9 +164,9 @@ impl JournalManager {
             2 => paths.prompt2,
             3 => paths.prompt3,
             n if n > 3 => {
-                // For prompts beyond 3, create additional files
-                let date_str = prompt.cycle_date.to_string();
-                self.base_path.join(format!("{}_prompt{}.txt", date_str, n))
+                // For prompts beyond 3, create additional files in the date directory
+                let date_dir = self.base_path.join(prompt.cycle_date.to_string());
+                date_dir.join(format!("prompt{}.txt", n))
             },
             _ => return Err("Invalid prompt number".into()),
         };
@@ -178,9 +186,9 @@ impl JournalManager {
             2 => paths.prompt2,
             3 => paths.prompt3,
             n if n > 3 => {
-                // For prompts beyond 3, check additional files
-                let date_str = cycle_date.to_string();
-                self.base_path.join(format!("{}_prompt{}.txt", date_str, n))
+                // For prompts beyond 3, check additional files in the date directory
+                let date_dir = self.base_path.join(cycle_date.to_string());
+                date_dir.join(format!("prompt{}.txt", n))
             },
             _ => return Err("Invalid prompt number".into()),
         };
@@ -217,21 +225,22 @@ impl JournalManager {
     pub async fn find_entries_needing_summaries(&self) -> Result<Vec<CycleDate>, Box<dyn std::error::Error>> {
         let mut entries_needing_summaries = Vec::new();
         
-        // Read all files in the base directory
+        // Read all date directories in the base directory
         let mut dir_entries = fs::read_dir(&self.base_path).await?;
         
         while let Some(entry) = dir_entries.next_entry().await? {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-            
-            // Look for entry files
-            if file_name_str.ends_with("_entry.txt") && file_name_str.len() == 15 {
-                let date_str = &file_name_str[0..5];
-                if let Ok(cycle_date) = CycleDate::from_string(date_str) {
-                    // Check if summary exists
-                    let paths = self.get_file_paths(&cycle_date);
-                    if !paths.summary.exists() {
-                        entries_needing_summaries.push(cycle_date);
+            if entry.file_type().await?.is_dir() {
+                let dir_name = entry.file_name();
+                let dir_name_str = dir_name.to_string_lossy();
+                
+                // Check if this is a valid date directory (5 characters)
+                if dir_name_str.len() == 5 {
+                    if let Ok(cycle_date) = CycleDate::from_string(&dir_name_str) {
+                        // Check if entry exists and summary doesn't
+                        let paths = self.get_file_paths(&cycle_date);
+                        if paths.entry.exists() && !paths.summary.exists() {
+                            entries_needing_summaries.push(cycle_date);
+                        }
                     }
                 }
             }
