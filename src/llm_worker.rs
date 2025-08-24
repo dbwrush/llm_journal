@@ -232,7 +232,12 @@ impl LlmWorker {
             .map(|s| s.as_str())
             .unwrap_or("No previous status recorded.");
         
-        let prompt = personalization_config.prompts.get_status_update_prompt(current_status, entry_content);
+        let user_profile = personalization_config.profile
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("No profile information available.");
+        
+        let prompt = personalization_config.prompts.get_status_update_prompt(user_profile, current_status, entry_content);
         
         let response = self.generate_text(&prompt, 200).await?;
         let response = response.trim();
