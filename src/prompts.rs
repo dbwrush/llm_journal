@@ -43,7 +43,7 @@ impl PromptsConfig {
         let path = path.as_ref();
         
         if !path.exists() {
-            tracing::info!("📝 Creating default prompts.json file");
+            tracing::info!("Creating default prompts.json file");
             let default_config = Self::default();
             let json = serde_json::to_string_pretty(&default_config)?;
             fs::write(path, json)?;
@@ -54,7 +54,7 @@ impl PromptsConfig {
         let config: PromptsConfig = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse prompts.json: {}", e))?;
         
-        tracing::info!("📝 Loaded prompts configuration from {}", path.display());
+        tracing::info!("Loaded prompts configuration from {}", path.display());
         Ok(config)
     }
     
@@ -92,7 +92,7 @@ impl PromptsConfig {
         let default_config = Self::default();
         let json = serde_json::to_string_pretty(&default_config)?;
         fs::write(&example_path, json)?;
-        tracing::info!("📝 Created example prompts file: {}", example_path.display());
+        tracing::info!("Created example prompts file: {}", example_path.display());
         Ok(())
     }
 }

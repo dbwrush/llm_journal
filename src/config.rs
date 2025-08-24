@@ -99,17 +99,17 @@ impl Config {
             Ok(content) => {
                 match toml::from_str(&content) {
                     Ok(config) => {
-                        tracing::info!("📁 Loaded configuration from config.toml");
+                        tracing::info!("Loaded configuration from config.toml");
                         config
                     }
                     Err(e) => {
-                        tracing::warn!("⚠️  Invalid config.toml format: {}, using defaults", e);
+                        tracing::warn!("Invalid config.toml format: {}, using defaults", e);
                         Self::default()
                     }
                 }
             }
             Err(_) => {
-                tracing::info!("📁 No config.toml found, using default configuration");
+                tracing::info!("No config.toml found, using default configuration");
                 Self::default()
             }
         }
@@ -154,7 +154,7 @@ use_gpu = true
 "#;
         
         fs::write("config.toml.example", sample_config)?;
-        tracing::info!("📝 Created config.toml.example file");
+        tracing::info!("Created config.toml.example file");
         Ok(())
     }
 }

@@ -54,7 +54,7 @@ impl SessionsData {
 
 impl AuthManager {
     pub fn new() -> Self {
-        tracing::info!("🔐 Authentication system initialized");
+        tracing::info!("Authentication system initialized");
         tracing::info!("   Each device will get a unique secure passcode");
         
         Self {
@@ -72,7 +72,7 @@ impl AuthManager {
             sessions.insert(session.token.clone(), session.clone());
         }
         
-        tracing::info!("📱 Loaded {} persistent device sessions", sessions.len());
+        tracing::info!("Loaded {} persistent device sessions", sessions.len());
     }
 
     /// Get current sessions as SessionsData for saving

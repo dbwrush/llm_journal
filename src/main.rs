@@ -52,35 +52,35 @@ async fn main() {
     // Initialize journal manager
     let journal_manager = Arc::new(journal::JournalManager::new(&config.journal.journal_directory));
     if let Err(e) = journal_manager.ensure_directories().await {
-        tracing::warn!("⚠️  Could not create journal directories: {}", e);
+        tracing::warn!("Could not create journal directories: {}", e);
     } else {
-        tracing::info!("📁 Journal directory ready: {}", config.journal.journal_directory);
+        tracing::info!("Journal directory ready: {}", config.journal.journal_directory);
     }
     
     // Load personalization configuration (prompts, profile, style)
     let personalization_config = match personalization::PersonalizationConfig::load(&config.journal.journal_directory) {
         Ok(config) => {
-            tracing::info!("📝 Personalization configuration loaded successfully");
+            tracing::info!("Personalization configuration loaded successfully");
             Arc::new(config)
         }
         Err(e) => {
-            tracing::error!("❌ Failed to load personalization configuration: {}", e);
+            tracing::error!("Failed to load personalization configuration: {}", e);
             std::process::exit(1);
         }
     };
     
     // Create example prompts file for user reference
     if let Err(e) = prompts::PromptsConfig::create_example("prompts") {
-        tracing::warn!("⚠️  Could not create example prompts file: {}", e);
+        tracing::warn!("Could not create example prompts file: {}", e);
     }
     
     match tokens_file_manager.load_sessions().await {
         Ok(sessions_data) => {
             auth_manager.load_sessions(&sessions_data).await;
-            tracing::info!("✅ Successfully loaded device sessions");
+            tracing::info!("Successfully loaded device sessions");
         }
         Err(e) => {
-            tracing::warn!("⚠️  Error loading device sessions: {}", e);
+            tracing::warn!("Error loading device sessions: {}", e);
             tracing::info!("   Starting with empty session list...");
         }
     }
@@ -88,12 +88,12 @@ async fn main() {
     // Initialize LLM manager first (shared by journal processor and prompt generator)
     let llm_manager = match LlmManager::new(config.llm.model_path.clone()) {
         Ok(manager) => {
-            tracing::info!("🤖 LLM manager initialized");
+            tracing::info!("LLM manager initialized");
             Arc::new(manager)
         }
         Err(e) => {
-            tracing::error!("❌ Failed to initialize LLM manager: {}", e);
-            tracing::warn!("⚠️  Journal processing and prompts will not be generated automatically");
+            tracing::error!("Failed to initialize LLM manager: {}", e);
+            tracing::warn!("Journal processing and prompts will not be generated automatically");
             std::process::exit(1);
         }
     };
@@ -105,21 +105,21 @@ async fn main() {
         config.clone(),
     ).await {
         Ok(processor) => {
-            tracing::info!("⏰ Journal processor initialized");
+            tracing::info!("Journal processor initialized");
             processor
         }
         Err(e) => {
-            tracing::error!("❌ Failed to initialize journal processor: {}", e);
+            tracing::error!("Failed to initialize journal processor: {}", e);
             std::process::exit(1);
         }
     };
     
     // Start the background journal processing
     if let Err(e) = journal_processor.start().await {
-        tracing::error!("❌ Failed to start journal processor: {}", e);
-        tracing::warn!("⚠️  Background journal processing disabled");
+        tracing::error!("Failed to start journal processor: {}", e);
+        tracing::warn!("Background journal processing disabled");
     } else {
-        tracing::info!("🔄 Background journal processing started");
+        tracing::info!("Background journal processing started");
     }
 
     // Initialize prompt generator using the shared LLM manager
@@ -134,10 +134,10 @@ async fn main() {
         
         // Start the prompt generator service
         if let Err(e) = prompt_generator.start().await {
-            tracing::error!("❌ Failed to start prompt generator: {}", e);
+            tracing::error!("Failed to start prompt generator: {}", e);
             None
         } else {
-            tracing::info!("🎯 Prompt generator service started successfully");
+            tracing::info!("Prompt generator service started successfully");
             Some(prompt_generator)
         }
     };
@@ -161,7 +161,7 @@ async fn main() {
     // Run our app with hyper, listening on configured port
     let bind_address = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&bind_address).await.unwrap();
-    tracing::info!("🚀 Server running on http://{}", bind_address);
+    tracing::info!("Server running on http://{}", bind_address);
     tracing::info!("   Press Ctrl+C to shutdown gracefully");
     
     // Set up graceful shutdown
@@ -173,17 +173,17 @@ async fn main() {
             .await
             .expect("Failed to install Ctrl+C handler");
         
-        tracing::info!("🛑 Shutdown signal received, saving data...");
+        tracing::info!("Shutdown signal received, saving data...");
         
         // Save current sessions before shutdown
         let sessions_data = auth_manager_shutdown.get_sessions_data().await;
         if let Err(e) = tokens_manager_shutdown.save_sessions(&sessions_data).await {
-            tracing::warn!("⚠️  Warning: Could not save sessions during shutdown: {}", e);
+            tracing::warn!("Warning: Could not save sessions during shutdown: {}", e);
         } else {
-            tracing::info!("💾 Sessions saved successfully");
+            tracing::info!("Sessions saved successfully");
         }
         
-        tracing::info!("👋 Goodbye!");
+        tracing::info!("Goodbye!");
     };
 
     // Run the server with graceful shutdown

@@ -28,11 +28,11 @@ impl LlmWorker {
         // Connect to Ollama using the default (localhost:11434) - most reliable method
         let ollama_client = Ollama::default();
         
-        tracing::info!("🔧 LLM Worker initialized with Ollama");
-        tracing::info!("   🏠 Ollama endpoint: localhost:11434 (DEFAULT - LOCAL ONLY)");
-        tracing::info!("   🤖 Model: {}", model_name);
-        tracing::info!("   🌡️  Temperature: {}", temperature);
-        tracing::info!("   🎯 Max tokens: {}", max_tokens);
+        tracing::info!("LLM Worker initialized with Ollama");
+        tracing::info!("   Ollama endpoint: localhost:11434 (DEFAULT - LOCAL ONLY)");
+        tracing::info!("   Model: {}", model_name);
+        tracing::info!("   Temperature: {}", temperature);
+        tracing::info!("   Max tokens: {}", max_tokens);
         
         Ok(Self {
             model_name,
@@ -61,18 +61,18 @@ impl LlmWorker {
 
     /// Check if Ollama is running and try to start it if needed
     async fn ensure_ollama_running(&self) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::info!("🔍 Checking if Ollama is running...");
+        tracing::info!("Checking if Ollama is running...");
         
         // Try to list models to check if Ollama is accessible
         match self.ollama_client.list_local_models().await {
             Ok(models) => {
-                tracing::info!("✅ Ollama is running with {} models available", models.len());
+                tracing::info!("Ollama is running with {} models available", models.len());
                 *self.is_connected.lock().await = true;
                 
                 // Check if our model is available
                 let model_available = models.iter().any(|m| m.name.contains(&self.model_name));
                 if !model_available {
-                    tracing::warn!("⚠️  Model '{}' not found in Ollama. Available models:", self.model_name);
+                    tracing::warn!("Model '{}' not found in Ollama. Available models:", self.model_name);
                     for model in &models {
                         tracing::warn!("   - {}", model.name);
                     }
@@ -83,7 +83,7 @@ impl LlmWorker {
                 Ok(())
             }
             Err(_) => {
-                tracing::warn!("⚠️  Ollama not accessible, attempting to start...");
+                tracing::warn!("Ollama not accessible, attempting to start...");
                 self.start_ollama().await
             }
         }
@@ -106,7 +106,7 @@ impl LlmWorker {
 
         match cmd.spawn() {
             Ok(mut child) => {
-                tracing::info!("🔄 Started Ollama process (PID: {:?})", child.id());
+                tracing::info!("Started Ollama process (PID: {:?})", child.id());
                 
                 // Give Ollama time to start
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -114,20 +114,20 @@ impl LlmWorker {
                 // Try to connect again
                 match self.ollama_client.list_local_models().await {
                     Ok(_) => {
-                        tracing::info!("✅ Successfully connected to Ollama");
+                        tracing::info!("Successfully connected to Ollama");
                         *self.is_connected.lock().await = true;
                         Ok(())
                     }
                     Err(e) => {
-                        tracing::error!("❌ Failed to connect to Ollama after starting: {}", e);
+                        tracing::error!("Failed to connect to Ollama after starting: {}", e);
                         let _ = child.kill();
                         Err("Could not start or connect to Ollama".into())
                     }
                 }
             }
             Err(e) => {
-                tracing::error!("❌ Failed to start Ollama: {}", e);
-                tracing::info!("💡 Please install Ollama from https://ollama.ai/ or start it manually");
+                tracing::error!("Failed to start Ollama: {}", e);
+                tracing::info!("Please install Ollama from https://ollama.ai/ or start it manually");
                 Err("Ollama not available and could not be started".into())
             }
         }
@@ -152,17 +152,11 @@ impl LlmWorker {
     pub async fn generate_text(&self, prompt: &str, max_length: usize) -> Result<String, Box<dyn std::error::Error>> {
         // Ensure Ollama is connected
         if !self.is_model_loaded().await {
-            tracing::info!("🔄 Ollama not connected, connecting now...");
+            tracing::info!("Ollama not connected, connecting now...");
             self.load_model().await?;
         }
 
-        let effective_max_length = if max_length > 0 { max_length } else { self.max_tokens };
-        
-        tracing::info!("🤖 Generating text with Ollama");
-        tracing::info!("   📝 Prompt length: {} chars", prompt.len());
-        tracing::info!("   🎯 Max output tokens: {}", effective_max_length);
-        tracing::info!("   🌡️  Temperature: {}", self.temperature);
-        tracing::info!("   📄 Model: {}", self.model_name);
+        tracing::debug!("Generating text with Ollama (prompt: {} chars)", prompt.len());
         
         // Configure model options - try without num_predict limit first
         let options = ModelOptions::default()
@@ -172,34 +166,19 @@ impl LlmWorker {
         let request = GenerationRequest::new(self.model_name.clone(), prompt.to_string())
             .options(options);
 
-        // Debug: Log the exact request details
-        tracing::info!("🔍 Request details:");
-        tracing::info!("   Model name: '{}'", self.model_name);
-        tracing::info!("   Prompt: '{}'", prompt);
-        tracing::info!("   Ollama endpoint: http://localhost:11434");
-
         // Make the request to Ollama
-        tracing::info!("⚡ Sending request to Ollama...");
         let start_time = std::time::Instant::now();
         
         match self.ollama_client.generate(request).await {
             Ok(response) => {
                 let duration = start_time.elapsed();
                 
-                // Debug: Log the full response structure
-                tracing::info!("🔍 Full response debug:");
-                tracing::info!("   Response text: '{}'", response.response);
-                tracing::info!("   Response length: {} chars", response.response.len());
-                tracing::info!("   Model used: '{}'", response.model);
-                tracing::info!("   Done: {}", response.done);
-                tracing::info!("   Context present: {}", response.context.is_some());
-                
-                tracing::info!("✅ Generated response in {:.2}s ({} chars)", 
+                tracing::info!("Generated response in {:.2}s ({} chars)", 
                               duration.as_secs_f64(), response.response.len());
                 Ok(response.response)
             }
             Err(e) => {
-                tracing::error!("❌ Ollama generation failed: {}", e);
+                tracing::error!("Ollama generation failed: {}", e);
                 // Reset connection status on error
                 *self.is_connected.lock().await = false;
                 Err(format!("Ollama generation failed: {}", e).into())
@@ -286,7 +265,7 @@ Updated Status:"#,
             tracing::info!("📄 No status update needed for today's entry");
             Ok(None)
         } else {
-            tracing::info!("📝 Generated status update ({} characters)", response.len());
+            tracing::info!("Generated status update ({} characters)", response.len());
             Ok(Some(response.to_string()))
         }
     }

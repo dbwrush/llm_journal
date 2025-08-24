@@ -32,7 +32,7 @@ impl JournalProcessor {
 
     /// Start the background processing scheduler
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::info!("🔄 Starting journal background processor...");
+        tracing::info!("Starting journal background processor...");
         
         // Parse the processing time from config (e.g., "03:00")
         let time_parts: Vec<&str> = self.config.journal.processing_time.split(':').collect();
@@ -62,9 +62,9 @@ impl JournalProcessor {
             
             Box::pin(async move {
                 if let Err(e) = process_journal_tasks(journal_manager, llm_manager, config).await {
-                    tracing::error!("❌ Error in journal processing: {}", e);
+                    tracing::error!("Error in journal processing: {}", e);
                 } else {
-                    tracing::info!("✅ Journal processing completed successfully");
+                    tracing::info!("Journal processing completed successfully");
                 }
             })
         })?;
@@ -73,7 +73,7 @@ impl JournalProcessor {
         self.scheduler.start().await?;
         
         tracing::info!(
-            "✅ Journal processor scheduled to run daily at {}",
+            "Journal processor scheduled to run daily at {}",
             self.config.journal.processing_time
         );
         
@@ -154,7 +154,7 @@ async fn process_journal_tasks(
     
     // Step 3: Generate prompts for tomorrow
     let tomorrow = CycleDate::today().next_day();
-    tracing::info!("🔄 Generating prompts for {}", tomorrow);
+    tracing::info!("Generating prompts for {}", tomorrow);
     
     // Determine prompt type based on tomorrow's position in the cycle
     let prompt_type = if tomorrow.is_first_day_of_year() {

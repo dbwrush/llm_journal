@@ -43,8 +43,8 @@ impl PromptGenerator {
         *is_running = true;
         drop(is_running);
 
-        tracing::info!("🚀 Starting prompt generator service");
-        tracing::info!("   📅 Daily prompt generation scheduled for: {}", self.config.journal.prompt_generation_time);
+        tracing::info!("Starting prompt generator service");
+        tracing::info!("   Daily prompt generation scheduled for: {}", self.config.journal.prompt_generation_time);
         
         // Clone references for the background task
         let journal_manager = Arc::clone(&self.journal_manager);
@@ -62,7 +62,7 @@ impl PromptGenerator {
                 Arc::clone(&config),
                 Arc::clone(&personalization_config),
             ).await {
-                tracing::error!("❌ Failed to check/generate startup prompts: {}", e);
+                tracing::error!("Failed to check/generate startup prompts: {}", e);
             }
 
             loop {
@@ -89,13 +89,13 @@ impl PromptGenerator {
                         Arc::clone(&config),
                         Arc::clone(&personalization_config),
                     ).await {
-                        tracing::error!("❌ Failed to generate daily prompts: {}", e);
+                        tracing::error!("Failed to generate daily prompts: {}", e);
                     }
                     
                     // Sleep for a minute to avoid immediate re-triggering
                     sleep(Duration::from_secs(60)).await;
                 } else {
-                    tracing::error!("❌ Invalid prompt generation time format, sleeping for 1 hour");
+                    tracing::error!("Invalid prompt generation time format, sleeping for 1 hour");
                     sleep(Duration::from_secs(3600)).await;
                 }
             }
@@ -142,24 +142,24 @@ impl PromptGenerator {
         personalization_config: Arc<PersonalizationConfig>,
     ) -> Result<(), String> {
         let today = CycleDate::today();
-        tracing::info!("🌅 Generating daily prompts for {}", today);
+        tracing::info!("Generating daily prompts for {}", today);
 
         // Check if prompts already exist for today
         let existing_prompts = Self::count_existing_prompts(&journal_manager, &today).await;
         if existing_prompts >= config.journal.max_prompts_per_day {
-            tracing::info!("✅ Prompts already exist for today ({}/{})", existing_prompts, config.journal.max_prompts_per_day);
+            tracing::info!("Prompts already exist for today ({}/{})", existing_prompts, config.journal.max_prompts_per_day);
             return Ok(());
         }
 
         // Load the LLM model
-        tracing::info!("🔄 Loading LLM model for prompt generation...");
+        tracing::debug!("Loading LLM model for prompt generation...");
         llm_manager.prepare_for_processing().await.map_err(|e| e.to_string())?;
         let llm_worker = llm_manager.get_worker();
 
         // Generate any missing summaries first (so they're available as context)
-        tracing::info!("🔄 Checking for entries that need summaries...");
+        tracing::debug!("Checking for entries that need summaries...");
         if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker, &personalization_config).await {
-            tracing::warn!("⚠️  Failed to generate some summaries: {}", e);
+            tracing::warn!("Failed to generate some summaries: {}", e);
             // Continue anyway - prompts can still be generated without perfect context
         }
 
@@ -228,7 +228,7 @@ impl PromptGenerator {
             return Ok(());
         }
 
-        tracing::info!("🔄 Generating on-demand prompt {} for {}", prompt_number, cycle_date);
+        tracing::debug!("Generating on-demand prompt {} for {}", prompt_number, cycle_date);
 
         // Load the LLM model
         self.llm_manager.prepare_for_processing().await?;
@@ -270,7 +270,7 @@ impl PromptGenerator {
         let llm_manager = Arc::clone(&self.llm_manager);
         let personalization_config = Arc::clone(&self.personalization_config);
         
-        tracing::info!("🚀 Queuing prompt {} generation for {} (async)", prompt_number, cycle_date);
+        tracing::debug!("Queuing prompt {} generation for {} (async)", prompt_number, cycle_date);
         
         // Spawn a background task to handle the generation
         tokio::spawn(async move {
@@ -280,7 +280,7 @@ impl PromptGenerator {
                 return;
             }
 
-            tracing::info!("🔄 Generating queued prompt {} for {}", prompt_number, cycle_date);
+            tracing::debug!("Generating queued prompt {} for {}", prompt_number, cycle_date);
             
             match Self::generate_single_prompt(
                 journal_manager, 
@@ -293,7 +293,7 @@ impl PromptGenerator {
                     tracing::info!("✅ Successfully generated queued prompt {} for {}", prompt_number, cycle_date);
                 }
                 Err(e) => {
-                    tracing::error!("❌ Failed to generate queued prompt {} for {}: {}", prompt_number, cycle_date, e);
+                    tracing::error!("Failed to generate queued prompt {} for {}: {}", prompt_number, cycle_date, e);
                 }
             }
         });
@@ -357,16 +357,16 @@ impl PromptGenerator {
         // Check if current time is past the prompt generation time for today
         let current_time = now.time();
         if current_time >= target_time {
-            tracing::info!("🔍 Startup check: Current time ({}) is past prompt generation time ({})", 
+            tracing::info!("Startup check: Current time ({}) is past prompt generation time ({})", 
                 current_time.format("%H:%M"), target_time.format("%H:%M"));
             
             // Check if we already have prompts for today
             let existing_prompts = Self::count_existing_prompts(&journal_manager, &today).await;
             if existing_prompts == 0 {
-                tracing::info!("🚀 No prompts found for today, generating them now...");
+                tracing::info!("No prompts found for today, generating them now...");
                 Self::generate_daily_prompts(journal_manager, llm_manager, config, personalization_config).await?;
             } else {
-                tracing::info!("✅ Found {} existing prompts for today, no need to generate", existing_prompts);
+                tracing::info!("Found {} existing prompts for today, no need to generate", existing_prompts);
             }
         } else {
             tracing::info!("⏰ Startup check: Current time ({}) is before prompt generation time ({}), will wait", 
@@ -404,7 +404,7 @@ impl PromptGenerator {
                     continue;
                 }
                 Err(e) => {
-                    tracing::error!("❌ Failed to load entry for {}: {}", cycle_date, e);
+                    tracing::error!("Failed to load entry for {}: {}", cycle_date, e);
                     continue;
                 }
             };

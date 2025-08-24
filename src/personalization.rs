@@ -68,7 +68,7 @@ impl PersonalizationConfig {
         let path = path.as_ref();
         
         if !path.exists() {
-            tracing::info!("📝 Creating default {} file", filename);
+            tracing::info!("Creating default {} file", filename);
             fs::write(path, &default_content)?;
             return Ok(Some(default_content));
         }
@@ -77,16 +77,16 @@ impl PersonalizationConfig {
             Ok(content) => {
                 let trimmed = content.trim();
                 if trimmed.is_empty() {
-                    tracing::warn!("⚠️ {} is empty, using default content", filename);
+                    tracing::warn!("{} is empty, using default content", filename);
                     Ok(Some(default_content))
                 } else {
-                    tracing::info!("✅ Loaded {} ({} characters)", filename, trimmed.len());
+                    tracing::info!("Loaded {} ({} characters)", filename, trimmed.len());
                     Ok(Some(trimmed.to_string()))
                 }
             }
             Err(e) => {
-                tracing::error!("❌ Failed to read {}: {}", filename, e);
-                tracing::info!("📝 Using default {} content", filename);
+                tracing::error!("Failed to read {}: {}", filename, e);
+                tracing::info!("Using default {} content", filename);
                 Ok(Some(default_content))
             }
         }
@@ -100,7 +100,7 @@ impl PersonalizationConfig {
         let path = path.as_ref();
         
         if !path.exists() {
-            tracing::info!("📄 {} does not exist yet (will be created during summary generation)", filename);
+            tracing::info!("{} does not exist yet (will be created during summary generation)", filename);
             return Ok(None);
         }
         
@@ -108,15 +108,15 @@ impl PersonalizationConfig {
             Ok(content) => {
                 let trimmed = content.trim();
                 if trimmed.is_empty() {
-                    tracing::info!("📄 {} is empty", filename);
+                    tracing::info!("{} is empty", filename);
                     Ok(None)
                 } else {
-                    tracing::info!("✅ Loaded {} ({} characters)", filename, trimmed.len());
+                    tracing::info!("Loaded {} ({} characters)", filename, trimmed.len());
                     Ok(Some(trimmed.to_string()))
                 }
             }
             Err(e) => {
-                tracing::error!("❌ Failed to read {}: {}", filename, e);
+                tracing::error!("Failed to read {}: {}", filename, e);
                 Ok(None)
             }
         }
@@ -129,7 +129,7 @@ impl PersonalizationConfig {
         let path = path.as_ref();
         
         if !path.exists() {
-            tracing::info!("📄 holidays.txt does not exist, creating with default content");
+            tracing::info!("holidays.txt does not exist, creating with default content");
             let default_content = Self::default_holidays_content();
             fs::write(path, &default_content)?;
             return Self::parse_holidays(&default_content);
@@ -137,12 +137,12 @@ impl PersonalizationConfig {
         
         match fs::read_to_string(path) {
             Ok(content) => {
-                tracing::info!("✅ Loaded holidays.txt ({} characters)", content.len());
+                tracing::info!("Loaded holidays.txt ({} characters)", content.len());
                 Self::parse_holidays(&content)
             }
             Err(e) => {
-                tracing::error!("❌ Failed to read holidays.txt: {}", e);
-                tracing::info!("📝 Using default holidays content");
+                tracing::error!("Failed to read holidays.txt: {}", e);
+                tracing::info!("Using default holidays content");
                 let default_content = Self::default_holidays_content();
                 Self::parse_holidays(&default_content)
             }
@@ -184,7 +184,7 @@ impl PersonalizationConfig {
             }
         }
         
-        tracing::info!("📅 Parsed {} holidays from holidays.txt", holidays.len());
+        tracing::info!("Parsed {} holidays from holidays.txt", holidays.len());
         Ok(holidays)
     }
     
@@ -239,7 +239,7 @@ impl PersonalizationConfig {
         // Update the in-memory status
         self.status = Some(new_status);
         
-        tracing::info!("✅ Updated status.txt with new context");
+        tracing::info!("Updated status.txt with new context");
         Ok(())
     }
     

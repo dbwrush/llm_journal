@@ -18,7 +18,7 @@ impl TokensFileManager {
     pub async fn load_sessions(&self) -> Result<SessionsData, Box<dyn std::error::Error + Send + Sync>> {
         // Check if file exists
         if !Path::new(&self.file_path).exists() {
-            tracing::info!("🔑 Token file not found, creating new one: {}", self.file_path);
+            tracing::info!("Token file not found, creating new one: {}", self.file_path);
             return Ok(SessionsData::new());
         }
 
@@ -28,7 +28,7 @@ impl TokensFileManager {
         // Parse JSON
         let sessions_data: SessionsData = serde_json::from_str(&content)?;
         
-        tracing::info!("🔑 Loaded {} device sessions from {}", sessions_data.sessions.len(), self.file_path);
+        tracing::info!("Loaded {} device sessions from {}", sessions_data.sessions.len(), self.file_path);
         Ok(sessions_data)
     }
 
