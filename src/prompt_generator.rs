@@ -44,7 +44,7 @@ impl PromptGenerator {
         drop(is_running);
 
         tracing::info!("Starting prompt generator service");
-        tracing::info!("   Daily prompt generation scheduled for: {}", self.config.journal.prompt_generation_time);
+        tracing::info!("   Unified daily processing (summaries, status, prompts) scheduled for: {}", self.config.journal.prompt_generation_time);
         
         // Clone references for the background task
         let journal_manager = Arc::clone(&self.journal_manager);
@@ -89,7 +89,7 @@ impl PromptGenerator {
                         Arc::clone(&config),
                         Arc::clone(&personalization_config),
                     ).await {
-                        tracing::error!("Failed to generate daily prompts: {}", e);
+                        tracing::error!("Failed to generate daily processing (summaries, status, prompts): {}", e);
                     }
                     
                     // Sleep for a minute to avoid immediate re-triggering
@@ -134,20 +134,24 @@ impl PromptGenerator {
         Ok(duration_until_target)
     }
 
-    /// Generate prompts for today
-    async fn generate_daily_prompts(
+    /// Unified prompt generation function with optional summary/status checks
+    /// - skip_checks: true to skip summary/status generation (for 2nd and 3rd prompts in daily batch)
+    async fn generate_prompts_unified(
         journal_manager: Arc<JournalManager>,
         llm_manager: Arc<LlmManager>,
         config: Arc<Config>,
         personalization_config: Arc<PersonalizationConfig>,
+        cycle_date: &CycleDate,
+        skip_checks: bool,
+        max_prompts_override: Option<u8>,
     ) -> Result<(), String> {
-        let today = CycleDate::today();
-        tracing::info!("Generating daily prompts for {}", today);
+        tracing::info!("Generating prompts for {} (skip_checks: {})", cycle_date, skip_checks);
 
-        // Check if prompts already exist for today
-        let existing_prompts = Self::count_existing_prompts(&journal_manager, &today).await;
-        if existing_prompts >= config.journal.max_prompts_per_day {
-            tracing::info!("Prompts already exist for today ({}/{})", existing_prompts, config.journal.max_prompts_per_day);
+        // Check if prompts already exist
+        let max_prompts = max_prompts_override.unwrap_or(config.journal.max_prompts_per_day);
+        let existing_prompts = Self::count_existing_prompts(&journal_manager, cycle_date).await;
+        if existing_prompts >= max_prompts {
+            tracing::info!("Prompts already exist for {} ({}/{})", cycle_date, existing_prompts, max_prompts);
             return Ok(());
         }
 
@@ -156,33 +160,39 @@ impl PromptGenerator {
         llm_manager.prepare_for_processing().await.map_err(|e| e.to_string())?;
         let llm_worker = llm_manager.get_worker();
 
-        // Generate any missing summaries first (so they're available as context)
-        tracing::debug!("Checking for entries that need summaries...");
-        if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker, &personalization_config).await {
-            tracing::warn!("Failed to generate some summaries: {}", e);
-            // Continue anyway - prompts can still be generated without perfect context
-        }
-
-        // Determine prompt type based on today's position in the cycle
-        let prompt_type = if today.is_first_day_of_year() {
+        // Determine prompt type based on date's position in the cycle
+        let prompt_type = if cycle_date.is_first_day_of_year() {
             PromptType::YearlyReflection
-        } else if today.is_first_day_of_month() {
+        } else if cycle_date.is_first_day_of_month() {
             PromptType::MonthlyReflection
-        } else if today.is_first_day_of_week() {
+        } else if cycle_date.is_first_day_of_week() {
             PromptType::WeeklyReflection
         } else {
             PromptType::Daily
         };
 
-        // Get context for prompt generation (now with fresh summaries available)
-        let context = journal_manager.get_context_for_prompt(&today).await.map_err(|e| e.to_string())?;
+        // Generate the missing prompts, with optimized checks
+        for prompt_number in (existing_prompts + 1)..=max_prompts {
+            tracing::info!("Generating prompt {} for {}", prompt_number, cycle_date);
+            
+            // Only run summary/status checks for the first prompt, unless explicitly requested
+            let should_skip_checks = skip_checks || (prompt_number > 1);
+            
+            if !should_skip_checks {
+                tracing::debug!("Checking for entries that need summaries and status files...");
+                if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker, &personalization_config).await {
+                    tracing::warn!("Failed to generate some summaries/status files: {}", e);
+                    // Continue anyway - prompts can still be generated without perfect context
+                }
+            } else {
+                tracing::debug!("Skipping summary/status checks for prompt {}", prompt_number);
+            }
 
-        // Generate the missing prompts
-        for prompt_number in (existing_prompts + 1)..=config.journal.max_prompts_per_day {
-            tracing::info!("Generating prompt {} for {}", prompt_number, today);
+            // Get context for prompt generation (will use existing summaries if available)
+            let context = journal_manager.get_context_for_prompt(cycle_date).await.map_err(|e| e.to_string())?;
             
             let prompt = llm_worker.generate_prompt(
-                &today,
+                cycle_date,
                 &context,
                 prompt_number,
                 prompt_type.clone(),
@@ -191,11 +201,54 @@ impl PromptGenerator {
             
             journal_manager.save_prompt(&prompt).await.map_err(|e| e.to_string())?;
             
-            tracing::info!("Prompt {} saved for {}", prompt_number, today);
+            tracing::info!("Prompt {} saved for {}", prompt_number, cycle_date);
         }
 
-        tracing::info!("Daily prompt generation completed for {}", today);
+        tracing::info!("Prompt generation completed for {}", cycle_date);
         Ok(())
+    }
+
+    /// Generate prompts for today (unified daily processing)
+    /// This function handles all daily processing at the scheduled time:
+    /// 1. Generates missing summaries and status files for old entries
+    /// 2. Generates today's prompts with proper context
+    async fn generate_daily_prompts(
+        journal_manager: Arc<JournalManager>,
+        llm_manager: Arc<LlmManager>,
+        config: Arc<Config>,
+        personalization_config: Arc<PersonalizationConfig>,
+    ) -> Result<(), String> {
+        let today = CycleDate::today();
+        Self::generate_prompts_unified(
+            journal_manager,
+            llm_manager,
+            config,
+            personalization_config,
+            &today,
+            false, // Don't skip checks for daily generation
+            None,  // Use default max_prompts_per_day
+        ).await
+    }
+
+    /// Public function for external callers (like journal processor)
+    pub async fn generate_prompts_for_date(
+        journal_manager: Arc<JournalManager>,
+        llm_manager: Arc<LlmManager>,
+        config: Arc<Config>,
+        personalization_config: Arc<PersonalizationConfig>,
+        cycle_date: &CycleDate,
+        skip_checks: bool,
+        max_prompts_override: Option<u8>,
+    ) -> Result<(), String> {
+        Self::generate_prompts_unified(
+            journal_manager,
+            llm_manager,
+            config,
+            personalization_config,
+            cycle_date,
+            skip_checks,
+            max_prompts_override,
+        ).await
     }
 
     /// Count how many prompts already exist for a given date
@@ -216,7 +269,7 @@ impl PromptGenerator {
         &self,
         cycle_date: &CycleDate,
         prompt_number: u8,
-        prompts_config: &PromptsConfig,
+        _prompts_config: &PromptsConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if prompt_number > self.config.journal.max_prompts_per_day {
             return Err(format!("Cannot generate prompt {}, max is {}", prompt_number, self.config.journal.max_prompts_per_day).into());
@@ -307,37 +360,27 @@ impl PromptGenerator {
         prompt_number: u8,
         personalization_config: &PersonalizationConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Prepare the LLM
-        llm_manager.prepare_for_processing().await?;
-        let llm_worker = llm_manager.get_worker();
-
-        // Determine prompt type
-        let prompt_type = if cycle_date.is_first_day_of_year() {
-            PromptType::YearlyReflection
-        } else if cycle_date.is_first_day_of_month() {
-            PromptType::MonthlyReflection
-        } else if cycle_date.is_first_day_of_week() {
-            PromptType::WeeklyReflection
-        } else {
-            PromptType::Daily
+        // Create a minimal config for single prompt generation
+        let temp_config = crate::config::Config {
+            journal: crate::config::JournalConfig {
+                journal_directory: "journal".to_string(),
+                processing_time: "03:00".to_string(),
+                prompt_generation_time: "06:00".to_string(),
+                max_prompts_per_day: prompt_number, // Generate up to the requested prompt number
+            },
+            ..Default::default()
         };
-
-        // Get context for prompt generation
-        let context = journal_manager.get_context_for_prompt(cycle_date).await?;
-
-        // Generate the prompt
-        let prompt = llm_worker.generate_prompt(
+        
+        // Use unified generation with checks (since this is typically user-requested)
+        Self::generate_prompts_unified(
+            journal_manager,
+            llm_manager,
+            Arc::new(temp_config),
+            Arc::new(personalization_config.clone()),
             cycle_date,
-            &context,
-            prompt_number,
-            prompt_type,
-            personalization_config,
-        ).await?;
-        
-        // Save the prompt
-        journal_manager.save_prompt(&prompt).await?;
-        
-        Ok(())
+            false, // Don't skip checks for user-requested prompts
+            Some(prompt_number), // Generate up to this specific prompt number
+        ).await.map_err(|e| e.into())
     }
 
     /// Check if we're past the prompt generation time for today and generate prompts if needed
@@ -349,6 +392,19 @@ impl PromptGenerator {
     ) -> Result<(), String> {
         let today = CycleDate::today();
         let now = Local::now();
+        
+        // First, always check for missing summaries and status files on startup
+        tracing::info!("Startup check: Looking for entries that need summaries or status files...");
+        
+        // Load the LLM model for summary generation
+        llm_manager.prepare_for_processing().await.map_err(|e| e.to_string())?;
+        let llm_worker = llm_manager.get_worker();
+        
+        // Generate any missing summaries and status files
+        if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker, &personalization_config).await {
+            tracing::warn!("Failed to generate some summaries/status files: {}", e);
+            // Continue anyway - this shouldn't block prompt generation
+        }
         
         // Parse the configured prompt generation time
         let target_time = NaiveTime::parse_from_str(&config.journal.prompt_generation_time, "%H:%M")
@@ -364,7 +420,15 @@ impl PromptGenerator {
             let existing_prompts = Self::count_existing_prompts(&journal_manager, &today).await;
             if existing_prompts == 0 {
                 tracing::info!("No prompts found for today, generating them now...");
-                Self::generate_daily_prompts(journal_manager, llm_manager, config, personalization_config).await?;
+                Self::generate_prompts_unified(
+                    journal_manager,
+                    llm_manager,
+                    config,
+                    personalization_config,
+                    &today,
+                    false, // Don't skip checks for startup generation
+                    None,  // Use default max_prompts_per_day
+                ).await?;
             } else {
                 tracing::info!("Found {} existing prompts for today, no need to generate", existing_prompts);
             }
@@ -376,27 +440,39 @@ impl PromptGenerator {
         Ok(())
     }
 
-    /// Generate summaries for entries that don't have them yet
+    /// Generate summaries and status files for entries that don't have them yet
     async fn generate_missing_summaries(
         journal_manager: &Arc<JournalManager>,
         llm_worker: &Arc<crate::llm_worker::LlmWorker>,
         personalization_config: &Arc<PersonalizationConfig>,
     ) -> Result<(), String> {
-        // Find entries that need summaries
+        // Find entries that need summaries or status files
         let entries_needing_summaries = journal_manager.find_entries_needing_summaries().await.map_err(|e| e.to_string())?;
+        let entries_needing_status = journal_manager.find_entries_needing_status().await.map_err(|e| e.to_string())?;
         
-        if entries_needing_summaries.is_empty() {
-            tracing::info!("All entries already have summaries");
+        // Combine and deduplicate entries that need processing
+        let mut entries_to_process = std::collections::HashSet::new();
+        for cycle_date in entries_needing_summaries {
+            entries_to_process.insert(cycle_date);
+        }
+        for cycle_date in entries_needing_status {
+            entries_to_process.insert(cycle_date);
+        }
+        
+        if entries_to_process.is_empty() {
+            tracing::info!("All entries already have summaries and status files");
             return Ok(());
         }
         
-        tracing::info!("Found {} entries needing summaries", entries_needing_summaries.len());
+        tracing::info!("Found {} entries needing summaries and/or status files", entries_to_process.len());
         
-        for cycle_date in entries_needing_summaries {
-            // Convert the result to avoid Send issues  
+        // Clone for mutable access
+        let mut personalization_config_mut = personalization_config.as_ref().clone();
+        
+        for cycle_date in entries_to_process {
+            // Load the entry content
             let entry_content = match journal_manager.load_entry(&cycle_date).await {
                 Ok(Some(entry)) => {
-                    tracing::info!("Generating summary for {}", cycle_date);
                     entry.content
                 }
                 Ok(None) => {
@@ -409,10 +485,40 @@ impl PromptGenerator {
                 }
             };
             
-            let summary = llm_worker.generate_summary(&entry_content, &cycle_date, personalization_config).await.map_err(|e| e.to_string())?;
-            journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
+            // Check what files are missing
+            let paths = journal_manager.get_file_paths(&cycle_date);
+            let needs_summary = !paths.summary.exists();
+            let needs_status = !paths.status.exists();
             
-            tracing::info!("Summary saved for {}", cycle_date);
+            if needs_summary || needs_status {
+                tracing::info!("Processing {} (summary: {}, status: {})", 
+                    cycle_date, 
+                    if needs_summary { "generating" } else { "exists" },
+                    if needs_status { "generating" } else { "exists" }
+                );
+                
+                let (summary, status_update) = llm_worker.generate_summary_with_status_update(&entry_content, &cycle_date, &mut personalization_config_mut).await.map_err(|e| e.to_string())?;
+                
+                // Save summary if needed
+                if needs_summary {
+                    journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
+                }
+                
+                // Save status if needed and generated
+                if needs_status {
+                    if let Some(status) = status_update {
+                        journal_manager.save_status(&cycle_date, &status).await.map_err(|e| e.to_string())?;
+                        tracing::info!("Summary and status saved for {}", cycle_date);
+                    } else {
+                        tracing::info!("Summary saved for {} (no status update needed)", cycle_date);
+                    }
+                } else if let Some(_status) = status_update {
+                    // Status file exists but we still updated global status
+                    tracing::info!("Summary saved for {} (status exists, global updated)", cycle_date);
+                } else {
+                    tracing::info!("Summary saved for {} (no status changes)", cycle_date);
+                }
+            }
         }
         
         Ok(())

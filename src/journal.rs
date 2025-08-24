@@ -1,7 +1,6 @@
 use crate::cycle_date::CycleDate;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -85,6 +84,7 @@ impl JournalManager {
         JournalFilePaths {
             entry: date_dir.join("entry.txt"),
             summary: date_dir.join("summary.txt"),
+            status: date_dir.join("status.txt"),
             prompt1: date_dir.join("prompt1.txt"),
             prompt2: date_dir.join("prompt2.txt"),
             prompt3: date_dir.join("prompt3.txt"),
@@ -221,6 +221,29 @@ impl JournalManager {
         }))
     }
 
+    /// Save a journal status update
+    pub async fn save_status(&self, cycle_date: &CycleDate, status: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.ensure_date_directory(cycle_date).await?;
+        let paths = self.get_file_paths(cycle_date);
+        
+        let mut file = fs::File::create(&paths.status).await?;
+        file.write_all(status.as_bytes()).await?;
+        
+        Ok(())
+    }
+
+    /// Load a journal status
+    pub async fn load_status(&self, cycle_date: &CycleDate) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let paths = self.get_file_paths(cycle_date);
+        
+        if !paths.status.exists() {
+            return Ok(None);
+        }
+        
+        let status = fs::read_to_string(&paths.status).await?;
+        Ok(Some(status))
+    }
+
     /// Find entries that need summaries
     pub async fn find_entries_needing_summaries(&self) -> Result<Vec<CycleDate>, Box<dyn std::error::Error>> {
         let mut entries_needing_summaries = Vec::new();
@@ -247,6 +270,34 @@ impl JournalManager {
         }
         
         Ok(entries_needing_summaries)
+    }
+
+    /// Find entries that need status files
+    pub async fn find_entries_needing_status(&self) -> Result<Vec<CycleDate>, Box<dyn std::error::Error>> {
+        let mut entries_needing_status = Vec::new();
+        
+        // Read all date directories in the base directory
+        let mut dir_entries = fs::read_dir(&self.base_path).await?;
+        
+        while let Some(entry) = dir_entries.next_entry().await? {
+            if entry.file_type().await?.is_dir() {
+                let dir_name = entry.file_name();
+                let dir_name_str = dir_name.to_string_lossy();
+                
+                // Check if this is a valid date directory (5 characters)
+                if dir_name_str.len() == 5 {
+                    if let Ok(cycle_date) = CycleDate::from_string(&dir_name_str) {
+                        // Check if entry exists and status doesn't
+                        let paths = self.get_file_paths(&cycle_date);
+                        if paths.entry.exists() && !paths.status.exists() {
+                            entries_needing_status.push(cycle_date);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(entries_needing_status)
     }
 
     /// Get past entries for prompt generation based on prompt type
@@ -309,6 +360,7 @@ impl JournalManager {
 pub struct JournalFilePaths {
     pub entry: PathBuf,
     pub summary: PathBuf,
+    pub status: PathBuf,
     pub prompt1: PathBuf,
     pub prompt2: PathBuf,
     pub prompt3: PathBuf,

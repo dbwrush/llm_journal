@@ -5,9 +5,8 @@ use axum::{
     routing::{get, post},
     Form, Json, Router,
 };
-use axum::body::Body;
 use askama::Template;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::AppState;
 
@@ -23,7 +22,6 @@ pub struct LoginForm {
 #[template(path = "journal.html")]
 pub struct JournalTemplate {
     pub cycle_date: String,
-    pub real_date: String,
     pub real_date_iso: String,  // For the date picker (YYYY-MM-DD format)
     pub entry_type: String,
     pub existing_content: String,
@@ -37,6 +35,7 @@ pub struct JournalTemplate {
 #[derive(Deserialize)]
 pub struct JournalEntryForm {
     pub content: String,
+    pub cycle_date: Option<String>,
 }
 
 /// Query parameters for journal date
@@ -103,10 +102,10 @@ async fn journal_home_page(
             <strong>Cycle Date:</strong> {}
         </div>
         <div class="nav">
-            <a href="/journal">✍️ Write Entry</a>
-            <a href="/journal/history">📚 View History</a>
+            <a href="/journal">Write Entry</a>
+            <a href="/journal/history">View History</a>
             <form method="post" action="/logout" style="display: inline;">
-                <button type="submit" class="nav logout">🚪 Logout</button>
+                <button type="submit" class="nav logout">Logout</button>
             </form>
         </div>
         <p>Welcome to your LLM-powered journal! Choose an action above to get started.</p>
@@ -197,7 +196,7 @@ async fn handle_login(
 <!DOCTYPE html>
 <html>
 <head><title>Login Failed</title><meta http-equiv="refresh" content="3;url=/login"></head>
-<body><h2>❌ Invalid Passcode</h2><p>Redirecting...</p></body>
+<body><h2>Invalid Passcode</h2><p>Redirecting...</p></body>
 </html>
             "#),
         ).into_response()
@@ -312,7 +311,6 @@ async fn journal_page(
 
             let template = JournalTemplate {
                 cycle_date: cycle_date.to_string(),
-                real_date: cycle_date.to_real_date().format("%A, %B %d, %Y").to_string(),
                 real_date_iso: cycle_date.to_real_date().format("%Y-%m-%d").to_string(),
                 entry_type: entry_type.to_string(),
                 existing_content: existing_entry.map(|e| e.content).unwrap_or_default(),
@@ -348,7 +346,24 @@ async fn submit_journal_entry(
     // Check if authenticated
     if let Some(token) = token {
         if app_state.auth_manager.validate_session(&token).await {
-            let cycle_date = crate::cycle_date::CycleDate::today();
+            // Use the cycle_date from the form if provided, otherwise default to today
+            let cycle_date = if let Some(ref date_str) = form.cycle_date {
+                tracing::info!("Form provided cycle_date: '{}'", date_str);
+                match crate::cycle_date::CycleDate::from_string(date_str) {
+                    Ok(date) => {
+                        tracing::info!("Successfully parsed cycle_date: {}", date);
+                        date
+                    },
+                    Err(e) => {
+                        tracing::warn!("Invalid cycle date in form '{}': {}, using today instead", date_str, e);
+                        crate::cycle_date::CycleDate::today()
+                    }
+                }
+            } else {
+                tracing::info!("No cycle_date provided in form, using today");
+                crate::cycle_date::CycleDate::today()
+            };
+            
             let journal_manager = &app_state.journal_manager;
 
             let entry = crate::journal::JournalEntry {
@@ -361,10 +376,15 @@ async fn submit_journal_entry(
             match journal_manager.save_entry(&entry).await {
                 Ok(()) => {
                     tracing::info!("Journal entry saved for {}", entry.cycle_date);
-                    // Redirect back to journal page
+                    // Redirect back to the same journal page date
+                    let redirect_url = if entry.cycle_date == crate::cycle_date::CycleDate::today() {
+                        "/journal".to_string()
+                    } else {
+                        format!("/journal?date={}", entry.cycle_date)
+                    };
                     return (
                         StatusCode::SEE_OTHER,
-                        [("Location", "/journal")],
+                        [("Location", redirect_url.as_str())],
                         Html("Entry saved successfully"),
                     ).into_response();
                 }
@@ -460,10 +480,10 @@ async fn generate_prompt_endpoint(
     // Check if authenticated
     if let Some(token) = token {
         if app_state.auth_manager.validate_session(&token).await {
-            tracing::info!("🤖 Generating prompt for entry type: {}", form.entry_type);
+            tracing::info!(" Generating prompt for entry type: {}", form.entry_type);
             
             // Parse cycle date
-            let cycle_date = match crate::cycle_date::CycleDate::from_string(&form.cycle_date) {
+            let _cycle_date = match crate::cycle_date::CycleDate::from_string(&form.cycle_date) {
                 Ok(date) => date,
                 Err(e) => {
                     tracing::error!("Invalid cycle date: {}", e);
@@ -563,7 +583,7 @@ async fn navigate_prompt_endpoint(
     // Check if authenticated
     if let Some(token) = token {
         if app_state.auth_manager.validate_session(&token).await {
-            tracing::info!("🔄 Navigation request: current_prompt={}, direction={}, cycle_date={}", 
+            tracing::info!(" Navigation request: current_prompt={}, direction={}, cycle_date={}", 
                 form.current_prompt, form.direction, form.cycle_date);
             
             // Parse cycle date
@@ -631,7 +651,7 @@ async fn navigate_prompt_endpoint(
                 }
             } else {
                 // Prompt doesn't exist, start background generation
-                tracing::info!("🚀 Starting background generation for prompt #{}", new_prompt_number);
+                tracing::info!(" Starting background generation for prompt #{}", new_prompt_number);
                 
                 // Queue prompt generation in background
                 if let Some(prompt_generator) = &app_state.prompt_generator {

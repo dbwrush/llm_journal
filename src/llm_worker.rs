@@ -14,13 +14,12 @@ use ollama_rs::models::ModelOptions;
 pub struct LlmWorker {
     model_name: String,
     temperature: f32,
-    max_tokens: usize,
     ollama_client: Ollama,
     is_connected: Arc<Mutex<bool>>,
 }
 
 impl LlmWorker {
-    pub fn new(model_path: String, temperature: f32, max_tokens: usize) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(model_path: String, temperature: f32, _max_tokens: usize) -> Result<Self, Box<dyn std::error::Error>> {
         // Extract model name from the full path
         // E.g., "C:\...\gpt-oss-20b-MXFP4.gguf" -> "gpt-oss-20b"
         let model_name = Self::extract_model_name(&model_path)?;
@@ -32,12 +31,10 @@ impl LlmWorker {
         tracing::info!("   Ollama endpoint: localhost:11434 (DEFAULT - LOCAL ONLY)");
         tracing::info!("   Model: {}", model_name);
         tracing::info!("   Temperature: {}", temperature);
-        tracing::info!("   Max tokens: {}", max_tokens);
         
         Ok(Self {
             model_name,
             temperature,
-            max_tokens,
             ollama_client,
             is_connected: Arc::new(Mutex::new(false)),
         })
@@ -91,7 +88,7 @@ impl LlmWorker {
 
     /// Try to start Ollama if it's not running
     async fn start_ollama(&self) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::info!("� Attempting to start Ollama...");
+        tracing::info!(" Attempting to start Ollama...");
         
         // Try to start Ollama in the background
         let mut cmd = if cfg!(target_os = "windows") {
@@ -149,7 +146,7 @@ impl LlmWorker {
     }
 
     /// Generate text using Ollama
-    pub async fn generate_text(&self, prompt: &str, max_length: usize) -> Result<String, Box<dyn std::error::Error>> {
+    pub async fn generate_text(&self, prompt: &str, _max_length: usize) -> Result<String, Box<dyn std::error::Error>> {
         // Ensure Ollama is connected
         if !self.is_model_loaded().await {
             tracing::info!("Ollama not connected, connecting now...");
@@ -262,7 +259,7 @@ Updated Status:"#,
         let response = response.trim();
         
         if response == "NO_UPDATE_NEEDED" || response.is_empty() {
-            tracing::info!("📄 No status update needed for today's entry");
+            tracing::info!(" No status update needed for today's entry");
             Ok(None)
         } else {
             tracing::info!("Generated status update ({} characters)", response.len());

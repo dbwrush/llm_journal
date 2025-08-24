@@ -41,7 +41,7 @@ impl TokensFileManager {
         // Write to file
         fs::write(&self.file_path, content).await?;
         
-        tracing::info!("💾 Saved {} device sessions to {}", sessions_data.sessions.len(), self.file_path);
+        tracing::info!(" Saved {} device sessions to {}", sessions_data.sessions.len(), self.file_path);
         Ok(())
     }
 }

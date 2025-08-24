@@ -4,7 +4,6 @@ mod cycle_date;
 mod file_manager;
 mod handlers;
 mod journal;
-mod journal_processor;
 mod llm_worker;
 mod personalization;
 mod prompt_generator;
@@ -17,8 +16,6 @@ use auth::AuthManager;
 use config::Config;
 use file_manager::TokensFileManager;
 use handlers::create_routes;
-use journal::JournalManager;
-use journal_processor::JournalProcessor;
 use llm_worker::LlmManager;
 
 /// Shared application state
@@ -98,29 +95,9 @@ async fn main() {
         }
     };
 
-    // Initialize journal processor for background tasks
-    let journal_processor = match JournalProcessor::new(
-        journal_manager.clone(),
-        llm_manager.clone(),
-        config.clone(),
-    ).await {
-        Ok(processor) => {
-            tracing::info!("Journal processor initialized");
-            processor
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize journal processor: {}", e);
-            std::process::exit(1);
-        }
-    };
-    
-    // Start the background journal processing
-    if let Err(e) = journal_processor.start().await {
-        tracing::error!("Failed to start journal processor: {}", e);
-        tracing::warn!("Background journal processing disabled");
-    } else {
-        tracing::info!("Background journal processing started");
-    }
+    // Note: Nightly journal processor has been removed as it was redundant.
+    // All processing (summaries, status files, and prompts) now happens
+    // unified at 3 AM via the prompt generator service.
 
     // Initialize prompt generator using the shared LLM manager
     let prompt_generator = {

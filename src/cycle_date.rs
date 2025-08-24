@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone};
+use chrono::{Datelike, Duration, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -221,7 +221,6 @@ impl fmt::Display for CycleDate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
     
     #[test]
     fn test_cycle_date_creation() {

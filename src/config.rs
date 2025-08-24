@@ -78,8 +78,8 @@ impl Default for Config {
             },
             journal: JournalConfig {
                 journal_directory: "journal".to_string(),
-                processing_time: "03:00".to_string(),
-                prompt_generation_time: "06:00".to_string(),
+                processing_time: "03:00".to_string(),  // Will be deprecated
+                prompt_generation_time: "03:00".to_string(),  // Unified processing at 3 AM
                 max_prompts_per_day: 3,
             },
             llm: LlmConfig {

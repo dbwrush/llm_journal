@@ -71,6 +71,7 @@
 
     <section class="entry-section">
         <form id="journal-form" action="/journal/entry" method="post">
+            <input type="hidden" name="cycle_date" value="{{ cycle_date }}">
             <textarea 
                 id="journal-content" 
                 name="content" 
@@ -1192,7 +1193,7 @@ function scheduleAutoSave() {
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },
-                body: 'content=' + encodeURIComponent(content.value)
+                body: 'content=' + encodeURIComponent(content.value) + '&cycle_date=' + encodeURIComponent('{{ cycle_date }}')
             });
             
             if (response.ok) {

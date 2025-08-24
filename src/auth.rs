@@ -91,7 +91,7 @@ impl AuthManager {
         let sessions_data = self.get_sessions_data().await;
         if let Err(e) = tokens_manager.save_sessions(&sessions_data).await {
             // Log error but don't fail the authentication
-            tracing::warn!("⚠️  Warning: Could not save sessions to file: {}", e);
+            tracing::warn!("Warning: Could not save sessions to file: {}", e);
         }
     }
 
@@ -108,7 +108,7 @@ impl AuthManager {
         // Store the pending auth
         self.pending_auths.write().await.insert(passcode.clone(), auth_request);
         
-        tracing::info!("🔑 New authentication request:");
+        tracing::info!(" New authentication request:");
         tracing::info!("   Device: {:?} (Physical: {})", 
                      device_name.as_deref().unwrap_or("Unknown"), 
                      is_physical_device);
@@ -131,7 +131,7 @@ impl AuthManager {
             if age.num_minutes() > 10 {
                 // Expired - remove it
                 pending_auths.remove(passcode);
-                tracing::warn!("❌ Authentication code expired");
+                tracing::warn!(" Authentication code expired");
                 return None;
             }
             
@@ -152,10 +152,10 @@ impl AuthManager {
             
             // Add the session
             self.sessions.write().await.insert(token.clone(), session);
-            tracing::info!("✅ New device authenticated: {:?}", device_name.as_deref().unwrap_or("Unknown"));
+            tracing::info!(" New device authenticated: {:?}", device_name.as_deref().unwrap_or("Unknown"));
             Some(token)
         } else {
-            tracing::warn!("❌ Invalid passcode attempt");
+            tracing::warn!(" Invalid passcode attempt");
             None
         }
     }
