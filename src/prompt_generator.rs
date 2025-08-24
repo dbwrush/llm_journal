@@ -37,7 +37,7 @@ impl PromptGenerator {
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut is_running = self.is_running.lock().await;
         if *is_running {
-            tracing::warn!("⚠️  Prompt generator is already running");
+            tracing::warn!("Prompt generator is already running");
             return Ok(());
         }
         *is_running = true;
@@ -70,14 +70,14 @@ impl PromptGenerator {
                 {
                     let running = is_running.lock().await;
                     if !*running {
-                        tracing::info!("🛑 Prompt generator service stopped");
+                        tracing::info!("Prompt generator service stopped");
                         break;
                     }
                 }
 
                 // Calculate time until next prompt generation
                 if let Ok(sleep_duration) = Self::calculate_sleep_until_prompt_time(&config.journal.prompt_generation_time) {
-                    tracing::info!("⏰ Next prompt generation in {:.1} hours", sleep_duration.as_secs_f64() / 3600.0);
+                    tracing::info!("Next prompt generation in {:.1} hours", sleep_duration.as_secs_f64() / 3600.0);
                     
                     // Sleep until prompt generation time
                     sleep(sleep_duration).await;
@@ -108,7 +108,7 @@ impl PromptGenerator {
     pub async fn stop(&self) {
         let mut is_running = self.is_running.lock().await;
         *is_running = false;
-        tracing::info!("🛑 Prompt generator service stopping...");
+        tracing::info!("Prompt generator service stopping...");
     }
 
     /// Calculate duration to sleep until the specified time today (or tomorrow if time has passed)
@@ -179,7 +179,7 @@ impl PromptGenerator {
 
         // Generate the missing prompts
         for prompt_number in (existing_prompts + 1)..=config.journal.max_prompts_per_day {
-            tracing::info!("📝 Generating prompt {} for {}", prompt_number, today);
+            tracing::info!("Generating prompt {} for {}", prompt_number, today);
             
             let prompt = llm_worker.generate_prompt(
                 &today,
@@ -191,10 +191,10 @@ impl PromptGenerator {
             
             journal_manager.save_prompt(&prompt).await.map_err(|e| e.to_string())?;
             
-            tracing::info!("✅ Prompt {} saved for {}", prompt_number, today);
+            tracing::info!("Prompt {} saved for {}", prompt_number, today);
         }
 
-        tracing::info!("🎉 Daily prompt generation completed for {}", today);
+        tracing::info!("Daily prompt generation completed for {}", today);
         Ok(())
     }
 
@@ -224,7 +224,7 @@ impl PromptGenerator {
 
         // Check if prompt already exists
         if let Ok(Some(_)) = self.journal_manager.load_prompt(cycle_date, prompt_number).await {
-            tracing::info!("✅ Prompt {} already exists for {}", prompt_number, cycle_date);
+            tracing::info!("Prompt {} already exists for {}", prompt_number, cycle_date);
             return Ok(());
         }
 
@@ -259,7 +259,7 @@ impl PromptGenerator {
         
         self.journal_manager.save_prompt(&prompt).await?;
         
-        tracing::info!("✅ On-demand prompt {} generated and saved for {}", prompt_number, cycle_date);
+        tracing::info!("On-demand prompt {} generated and saved for {}", prompt_number, cycle_date);
         Ok(())
     }
 
@@ -276,7 +276,7 @@ impl PromptGenerator {
         tokio::spawn(async move {
             // Remove the max_prompts_per_day limitation for unlimited prompts
             if let Ok(Some(_)) = journal_manager.load_prompt(&cycle_date, prompt_number).await {
-                tracing::debug!("✅ Prompt {} already exists for {}, skipping", prompt_number, cycle_date);
+                tracing::debug!("Prompt {} already exists for {}, skipping", prompt_number, cycle_date);
                 return;
             }
 
@@ -290,7 +290,7 @@ impl PromptGenerator {
                 &personalization_config,
             ).await {
                 Ok(()) => {
-                    tracing::info!("✅ Successfully generated queued prompt {} for {}", prompt_number, cycle_date);
+                    tracing::info!("Successfully generated queued prompt {} for {}", prompt_number, cycle_date);
                 }
                 Err(e) => {
                     tracing::error!("Failed to generate queued prompt {} for {}: {}", prompt_number, cycle_date, e);
@@ -369,7 +369,7 @@ impl PromptGenerator {
                 tracing::info!("Found {} existing prompts for today, no need to generate", existing_prompts);
             }
         } else {
-            tracing::info!("⏰ Startup check: Current time ({}) is before prompt generation time ({}), will wait", 
+            tracing::info!("Startup check: Current time ({}) is before prompt generation time ({}), will wait", 
                 current_time.format("%H:%M"), target_time.format("%H:%M"));
         }
         
@@ -386,21 +386,21 @@ impl PromptGenerator {
         let entries_needing_summaries = journal_manager.find_entries_needing_summaries().await.map_err(|e| e.to_string())?;
         
         if entries_needing_summaries.is_empty() {
-            tracing::info!("✅ All entries already have summaries");
+            tracing::info!("All entries already have summaries");
             return Ok(());
         }
         
-        tracing::info!("📝 Found {} entries needing summaries", entries_needing_summaries.len());
+        tracing::info!("Found {} entries needing summaries", entries_needing_summaries.len());
         
         for cycle_date in entries_needing_summaries {
             // Convert the result to avoid Send issues  
             let entry_content = match journal_manager.load_entry(&cycle_date).await {
                 Ok(Some(entry)) => {
-                    tracing::info!("📝 Generating summary for {}", cycle_date);
+                    tracing::info!("Generating summary for {}", cycle_date);
                     entry.content
                 }
                 Ok(None) => {
-                    tracing::warn!("⚠️  No entry found for {}", cycle_date);
+                    tracing::warn!("No entry found for {}", cycle_date);
                     continue;
                 }
                 Err(e) => {
@@ -412,7 +412,7 @@ impl PromptGenerator {
             let summary = llm_worker.generate_summary(&entry_content, &cycle_date, personalization_config).await.map_err(|e| e.to_string())?;
             journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
             
-            tracing::info!("✅ Summary saved for {}", cycle_date);
+            tracing::info!("Summary saved for {}", cycle_date);
         }
         
         Ok(())
