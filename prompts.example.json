@@ -1,0 +1,12 @@
+{
+  "summary_generation": "Please summarize the following journal entry in 2-3 sentences, focusing on key emotions, events, and insights:\n\n{entry_content}\n\nSummary:",
+  "daily_prompt": "Based on the following journal summaries from the past week, create an insightful and thought-provoking journal prompt for today. The prompt should help the person reflect on patterns, growth, or connections to recent experiences:\n\n{context}\n\nToday's journal prompt:",
+  "weekly_reflection": "Based on the following journal entries from the past week, create a reflective prompt that encourages deeper weekly reflection on themes, patterns, growth, and lessons learned:\n\n{context}\n\nWeekly reflection prompt:",
+  "monthly_reflection": "Based on the following weekly reflections from the past month, create a comprehensive monthly reflection prompt that explores broader patterns, achievements, challenges, and personal growth:\n\n{context}\n\nMonthly reflection prompt:",
+  "yearly_reflection": "Based on the following monthly reflections from the past year, create a profound yearly reflection prompt that encourages deep introspection on personal transformation, major themes, life lessons, and future aspirations:\n\n{context}\n\nYearly reflection prompt:",
+  "prompt_variations": {
+    "second": "\n\nCreate a different perspective or angle for this prompt:",
+    "third": "\n\nCreate a third unique approach to this reflection:",
+    "additional": "\n\nCreate another unique and creative approach to this reflection (variation #{number}):"
+  }
+}

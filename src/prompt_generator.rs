@@ -2,6 +2,8 @@ use crate::config::Config;
 use crate::cycle_date::CycleDate;
 use crate::journal::{JournalManager, PromptType};
 use crate::llm_worker::LlmManager;
+use crate::personalization::PersonalizationConfig;
+use crate::prompts::PromptsConfig;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use chrono::{Local, NaiveTime};
@@ -11,6 +13,7 @@ pub struct PromptGenerator {
     journal_manager: Arc<JournalManager>,
     llm_manager: Arc<LlmManager>,
     config: Arc<Config>,
+    personalization_config: Arc<PersonalizationConfig>,
     is_running: Arc<tokio::sync::Mutex<bool>>,
 }
 
@@ -19,11 +22,13 @@ impl PromptGenerator {
         journal_manager: Arc<JournalManager>,
         llm_manager: Arc<LlmManager>,
         config: Arc<Config>,
+        personalization_config: Arc<PersonalizationConfig>,
     ) -> Self {
         Self {
             journal_manager,
             llm_manager,
             config,
+            personalization_config,
             is_running: Arc::new(tokio::sync::Mutex::new(false)),
         }
     }
@@ -45,6 +50,7 @@ impl PromptGenerator {
         let journal_manager = Arc::clone(&self.journal_manager);
         let llm_manager = Arc::clone(&self.llm_manager);
         let config = Arc::clone(&self.config);
+        let personalization_config = Arc::clone(&self.personalization_config);
         let is_running = Arc::clone(&self.is_running);
 
         // Spawn background task
@@ -54,6 +60,7 @@ impl PromptGenerator {
                 Arc::clone(&journal_manager),
                 Arc::clone(&llm_manager),
                 Arc::clone(&config),
+                Arc::clone(&personalization_config),
             ).await {
                 tracing::error!("❌ Failed to check/generate startup prompts: {}", e);
             }
@@ -80,6 +87,7 @@ impl PromptGenerator {
                         Arc::clone(&journal_manager),
                         Arc::clone(&llm_manager),
                         Arc::clone(&config),
+                        Arc::clone(&personalization_config),
                     ).await {
                         tracing::error!("❌ Failed to generate daily prompts: {}", e);
                     }
@@ -131,6 +139,7 @@ impl PromptGenerator {
         journal_manager: Arc<JournalManager>,
         llm_manager: Arc<LlmManager>,
         config: Arc<Config>,
+        personalization_config: Arc<PersonalizationConfig>,
     ) -> Result<(), String> {
         let today = CycleDate::today();
         tracing::info!("🌅 Generating daily prompts for {}", today);
@@ -149,7 +158,7 @@ impl PromptGenerator {
 
         // Generate any missing summaries first (so they're available as context)
         tracing::info!("🔄 Checking for entries that need summaries...");
-        if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker).await {
+        if let Err(e) = Self::generate_missing_summaries(&journal_manager, &llm_worker, &personalization_config).await {
             tracing::warn!("⚠️  Failed to generate some summaries: {}", e);
             // Continue anyway - prompts can still be generated without perfect context
         }
@@ -177,6 +186,7 @@ impl PromptGenerator {
                 &context,
                 prompt_number,
                 prompt_type.clone(),
+                &personalization_config,
             ).await.map_err(|e| e.to_string())?;
             
             journal_manager.save_prompt(&prompt).await.map_err(|e| e.to_string())?;
@@ -206,6 +216,7 @@ impl PromptGenerator {
         &self,
         cycle_date: &CycleDate,
         prompt_number: u8,
+        prompts_config: &PromptsConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if prompt_number > self.config.journal.max_prompts_per_day {
             return Err(format!("Cannot generate prompt {}, max is {}", prompt_number, self.config.journal.max_prompts_per_day).into());
@@ -243,6 +254,7 @@ impl PromptGenerator {
             &context,
             prompt_number,
             prompt_type,
+            &self.personalization_config,
         ).await?;
         
         self.journal_manager.save_prompt(&prompt).await?;
@@ -253,9 +265,10 @@ impl PromptGenerator {
 
     /// Queue prompt generation asynchronously without waiting for completion
     /// This is ideal for triggering prompt generation from web handlers without blocking the response
-    pub fn queue_prompt_generation(&self, cycle_date: CycleDate, prompt_number: u8) {
+    pub fn queue_prompt_generation(&self, cycle_date: CycleDate, prompt_number: u8, _prompts_config: &PromptsConfig) {
         let journal_manager = Arc::clone(&self.journal_manager);
         let llm_manager = Arc::clone(&self.llm_manager);
+        let personalization_config = Arc::clone(&self.personalization_config);
         
         tracing::info!("🚀 Queuing prompt {} generation for {} (async)", prompt_number, cycle_date);
         
@@ -273,7 +286,8 @@ impl PromptGenerator {
                 journal_manager, 
                 llm_manager, 
                 &cycle_date, 
-                prompt_number
+                prompt_number,
+                &personalization_config,
             ).await {
                 Ok(()) => {
                     tracing::info!("✅ Successfully generated queued prompt {} for {}", prompt_number, cycle_date);
@@ -291,6 +305,7 @@ impl PromptGenerator {
         llm_manager: Arc<LlmManager>,
         cycle_date: &CycleDate,
         prompt_number: u8,
+        personalization_config: &PersonalizationConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Prepare the LLM
         llm_manager.prepare_for_processing().await?;
@@ -316,6 +331,7 @@ impl PromptGenerator {
             &context,
             prompt_number,
             prompt_type,
+            personalization_config,
         ).await?;
         
         // Save the prompt
@@ -329,6 +345,7 @@ impl PromptGenerator {
         journal_manager: Arc<JournalManager>,
         llm_manager: Arc<LlmManager>,
         config: Arc<Config>,
+        personalization_config: Arc<PersonalizationConfig>,
     ) -> Result<(), String> {
         let today = CycleDate::today();
         let now = Local::now();
@@ -347,7 +364,7 @@ impl PromptGenerator {
             let existing_prompts = Self::count_existing_prompts(&journal_manager, &today).await;
             if existing_prompts == 0 {
                 tracing::info!("🚀 No prompts found for today, generating them now...");
-                Self::generate_daily_prompts(journal_manager, llm_manager, config).await?;
+                Self::generate_daily_prompts(journal_manager, llm_manager, config, personalization_config).await?;
             } else {
                 tracing::info!("✅ Found {} existing prompts for today, no need to generate", existing_prompts);
             }
@@ -363,6 +380,7 @@ impl PromptGenerator {
     async fn generate_missing_summaries(
         journal_manager: &Arc<JournalManager>,
         llm_worker: &Arc<crate::llm_worker::LlmWorker>,
+        personalization_config: &Arc<PersonalizationConfig>,
     ) -> Result<(), String> {
         // Find entries that need summaries
         let entries_needing_summaries = journal_manager.find_entries_needing_summaries().await.map_err(|e| e.to_string())?;
@@ -391,7 +409,7 @@ impl PromptGenerator {
                 }
             };
             
-            let summary = llm_worker.generate_summary(&entry_content, &cycle_date).await.map_err(|e| e.to_string())?;
+            let summary = llm_worker.generate_summary(&entry_content, &cycle_date, personalization_config).await.map_err(|e| e.to_string())?;
             journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
             
             tracing::info!("✅ Summary saved for {}", cycle_date);

@@ -6,7 +6,9 @@ mod handlers;
 mod journal;
 mod journal_processor;
 mod llm_worker;
+mod personalization;
 mod prompt_generator;
+mod prompts;
 
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -27,6 +29,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub journal_manager: Arc<journal::JournalManager>,
     pub prompt_generator: Option<Arc<prompt_generator::PromptGenerator>>,
+    pub personalization_config: Arc<personalization::PersonalizationConfig>,
 }
 
 #[tokio::main]
@@ -52,6 +55,23 @@ async fn main() {
         tracing::warn!("⚠️  Could not create journal directories: {}", e);
     } else {
         tracing::info!("📁 Journal directory ready: {}", config.journal.journal_directory);
+    }
+    
+    // Load personalization configuration (prompts, profile, style)
+    let personalization_config = match personalization::PersonalizationConfig::load(&config.journal.journal_directory) {
+        Ok(config) => {
+            tracing::info!("📝 Personalization configuration loaded successfully");
+            Arc::new(config)
+        }
+        Err(e) => {
+            tracing::error!("❌ Failed to load personalization configuration: {}", e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Create example prompts file for user reference
+    if let Err(e) = prompts::PromptsConfig::create_example("prompts") {
+        tracing::warn!("⚠️  Could not create example prompts file: {}", e);
     }
     
     match tokens_file_manager.load_sessions().await {
@@ -109,6 +129,7 @@ async fn main() {
             journal_manager.clone(),
             llm_manager.clone(),
             config.clone(),
+            personalization_config.clone(),
         ));
         
         // Start the prompt generator service
@@ -128,6 +149,7 @@ async fn main() {
         config: config.clone(),
         journal_manager: journal_manager.clone(),
         prompt_generator,
+        personalization_config,
     };
 
     // Build our application with clean, simple routes

@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::cycle_date::CycleDate;
 use crate::journal::{JournalManager, PromptType};
 use crate::llm_worker::LlmManager;
+use crate::personalization::PersonalizationConfig;
 use std::sync::Arc;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
@@ -110,6 +111,10 @@ async fn process_journal_tasks(
 ) -> Result<(), String> {
     tracing::info!("🌙 Starting nightly journal processing...");
     
+    // Load personalization configuration 
+    let mut personalization_config = PersonalizationConfig::load(&config.journal.journal_directory)
+        .map_err(|e| format!("Failed to load personalization config: {}", e))?;
+    
     // Step 1: Load the LLM model
     tracing::info!("🔄 Loading LLM model...");
     llm_manager.prepare_for_processing().await.map_err(|e| e.to_string())?;
@@ -136,10 +141,15 @@ async fn process_journal_tasks(
             }
         };
         
-        let summary = llm_worker.generate_summary(&entry_content, &cycle_date).await.map_err(|e| e.to_string())?;
+        let (summary, status_update) = llm_worker.generate_summary_with_status_update(&entry_content, &cycle_date, &mut personalization_config).await.map_err(|e| e.to_string())?;
         journal_manager.save_summary(&summary).await.map_err(|e| e.to_string())?;
         
-        tracing::info!("✅ Summary saved for {}", cycle_date);
+        if let Some(status) = status_update {
+            tracing::info!("✅ Summary and status update saved for {}", cycle_date);
+            tracing::debug!("📄 Status update: {}", status);
+        } else {
+            tracing::info!("✅ Summary saved for {} (no status update)", cycle_date);
+        }
     }
     
     // Step 3: Generate prompts for tomorrow
@@ -169,6 +179,7 @@ async fn process_journal_tasks(
             &context,
             prompt_number,
             prompt_type.clone(),
+            &personalization_config,
         ).await.map_err(|e| e.to_string())?;
         
         journal_manager.save_prompt(&prompt).await.map_err(|e| e.to_string())?;

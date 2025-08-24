@@ -208,11 +208,13 @@ impl LlmWorker {
     }
     
     /// Generate a summary for a journal entry
-    pub async fn generate_summary(&self, entry_content: &str, cycle_date: &CycleDate) -> Result<JournalSummary, Box<dyn std::error::Error>> {
-        let prompt = format!(
-            "Please summarize the following journal entry in 2-3 sentences, focusing on key emotions, events, and insights:\n\n{}\n\nSummary:",
-            entry_content
-        );
+    pub async fn generate_summary(
+        &self, 
+        entry_content: &str, 
+        cycle_date: &CycleDate,
+        personalization_config: &crate::personalization::PersonalizationConfig,
+    ) -> Result<JournalSummary, Box<dyn std::error::Error>> {
+        let prompt = personalization_config.prompts.get_summary_prompt(entry_content);
         
         let summary = self.generate_text(&prompt, 100).await?;
         
@@ -222,6 +224,72 @@ impl LlmWorker {
             generated_at: Local::now(),
         })
     }
+    
+    /// Generate both summary and status update for a journal entry
+    pub async fn generate_summary_with_status_update(
+        &self,
+        entry_content: &str,
+        cycle_date: &CycleDate,
+        personalization_config: &mut crate::personalization::PersonalizationConfig,
+    ) -> Result<(JournalSummary, Option<String>), Box<dyn std::error::Error>> {
+        // First generate the summary
+        let summary = self.generate_summary(entry_content, cycle_date, personalization_config).await?;
+        
+        // Generate status update based on the entry and current status
+        let status_update = self.generate_status_update(entry_content, personalization_config).await?;
+        
+        // Update the personalization config with new status
+        if let Some(ref new_status) = status_update {
+            personalization_config.update_status(new_status.clone())?;
+        }
+        
+        Ok((summary, status_update))
+    }
+    
+    /// Generate a status update based on journal entry and current status
+    async fn generate_status_update(
+        &self,
+        entry_content: &str,
+        personalization_config: &crate::personalization::PersonalizationConfig,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let current_status = personalization_config.get_current_status()
+            .map(|s| s.as_str())
+            .unwrap_or("No previous status recorded.");
+        
+        let prompt = format!(
+            r#"Based on this journal entry and the current status, update the user's ongoing life circumstances. Focus on significant changes, ongoing situations, emotional states, relationships, work/health updates, and challenges/projects that should be remembered for future context.
+
+CURRENT STATUS:
+{}
+
+TODAY'S JOURNAL ENTRY:
+{}
+
+Please provide an updated status summary that:
+1. Preserves important ongoing situations from current status
+2. Incorporates significant new developments from today's entry  
+3. Removes outdated information
+4. Focuses on context that will be valuable for future journal prompts
+5. Keeps it concise but informative (3-5 sentences)
+
+If today's entry doesn't contain significant status changes, respond with "NO_UPDATE_NEEDED".
+
+Updated Status:"#,
+            current_status,
+            entry_content
+        );
+        
+        let response = self.generate_text(&prompt, 200).await?;
+        let response = response.trim();
+        
+        if response == "NO_UPDATE_NEEDED" || response.is_empty() {
+            tracing::info!("📄 No status update needed for today's entry");
+            Ok(None)
+        } else {
+            tracing::info!("📝 Generated status update ({} characters)", response.len());
+            Ok(Some(response.to_string()))
+        }
+    }
 
     /// Generate a journal prompt based on context
     pub async fn generate_prompt(
@@ -230,43 +298,21 @@ impl LlmWorker {
         context: &[String],
         prompt_number: u8,
         prompt_type: PromptType,
+        personalization_config: &crate::personalization::PersonalizationConfig,
     ) -> Result<JournalPrompt, Box<dyn std::error::Error>> {
         let context_str = context.join("\n\n");
         
-        let system_prompt = match prompt_type {
-            PromptType::Daily => {
-                format!(
-                    "Based on the following journal summaries from the past week, create an insightful and thought-provoking journal prompt for today. The prompt should help the person reflect on patterns, growth, or connections to recent experiences:\n\n{}\n\nToday's journal prompt:",
-                    context_str
-                )
-            }
-            PromptType::WeeklyReflection => {
-                format!(
-                    "Based on the following journal entries from the past week, create a reflective prompt that encourages deeper weekly reflection on themes, patterns, growth, and lessons learned:\n\n{}\n\nWeekly reflection prompt:",
-                    context_str
-                )
-            }
-            PromptType::MonthlyReflection => {
-                format!(
-                    "Based on the following weekly reflections from the past month, create a comprehensive monthly reflection prompt that explores broader patterns, achievements, challenges, and personal growth:\n\n{}\n\nMonthly reflection prompt:",
-                    context_str
-                )
-            }
-            PromptType::YearlyReflection => {
-                format!(
-                    "Based on the following monthly reflections from the past year, create a profound yearly reflection prompt that encourages deep introspection on personal transformation, major themes, life lessons, and future aspirations:\n\n{}\n\nYearly reflection prompt:",
-                    context_str
-                )
-            }
-        };
+        // Enrich context with user profile and style information
+        let enriched_context = personalization_config.enrich_context(&context_str);
+        
+        let system_prompt = personalization_config.prompts.get_prompt_template(&prompt_type, &enriched_context);
 
         // Add variation for multiple prompts
-        let variation_prompt = match prompt_number {
-            1 => system_prompt,
-            2 => format!("{}\n\nCreate a different perspective or angle for this prompt:", system_prompt),
-            3 => format!("{}\n\nCreate a third unique approach to this reflection:", system_prompt),
-            n if n > 3 => format!("{}\n\nCreate another unique and creative approach to this reflection (variation #{}):", system_prompt, n),
-            _ => return Err("Invalid prompt number".into()),
+        let variation_suffix = personalization_config.prompts.get_variation_suffix(prompt_number);
+        let variation_prompt = if variation_suffix.is_empty() {
+            system_prompt
+        } else {
+            format!("{}{}", system_prompt, variation_suffix)
         };
         
         let generated_prompt = self.generate_text(&variation_prompt, 150).await?;

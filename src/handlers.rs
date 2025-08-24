@@ -635,7 +635,7 @@ async fn navigate_prompt_endpoint(
                 
                 // Queue prompt generation in background
                 if let Some(prompt_generator) = &app_state.prompt_generator {
-                    prompt_generator.queue_prompt_generation(cycle_date, new_prompt_number as u8);
+                    prompt_generator.queue_prompt_generation(cycle_date, new_prompt_number as u8, &app_state.personalization_config.prompts);
                 } else {
                     tracing::error!("Prompt generator not available");
                     return (StatusCode::INTERNAL_SERVER_ERROR, "Prompt generator not available").into_response();
