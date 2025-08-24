@@ -12,6 +12,7 @@ pub struct PromptVariations {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PromptsConfig {
     pub summary_generation: String,
+    pub status_update: String,
     pub daily_prompt: String,
     pub weekly_reflection: String,
     pub monthly_reflection: String,
@@ -23,6 +24,7 @@ impl Default for PromptsConfig {
     fn default() -> Self {
         Self {
             summary_generation: "Please summarize the following journal entry in 2-3 sentences, focusing on key emotions, events, and insights:\n\n{entry_content}\n\nSummary:".to_string(),
+            status_update: "Based on this journal entry and the current status, update the user's ongoing life circumstances. Focus on significant changes, ongoing situations, emotional states, relationships, work/health updates, and challenges/projects that should be remembered for future context.\n\nCURRENT STATUS:\n{current_status}\n\nTODAY'S JOURNAL ENTRY:\n{entry_content}\n\nPlease provide an updated status summary that:\n1. Preserves important ongoing situations from current status\n2. Incorporates significant new developments from today's entry\n3. Removes outdated information\n4. Focuses on context that will be valuable for future journal prompts\n5. Keeps it concise but informative (3-5 sentences)\n\nIf today's entry doesn't contain significant status changes, respond with \"NO_UPDATE_NEEDED\".\n\nUpdated Status:".to_string(),
             daily_prompt: "Based on the following journal summaries from the past week, create an insightful and thought-provoking journal prompt for today. The prompt should help the person reflect on patterns, growth, or connections to recent experiences:\n\n{context}\n\nToday's journal prompt:".to_string(),
             weekly_reflection: "Based on the following journal entries from the past week, create a reflective prompt that encourages deeper weekly reflection on themes, patterns, growth, and lessons learned:\n\n{context}\n\nWeekly reflection prompt:".to_string(),
             monthly_reflection: "Based on the following weekly reflections from the past month, create a comprehensive monthly reflection prompt that explores broader patterns, achievements, challenges, and personal growth:\n\n{context}\n\nMonthly reflection prompt:".to_string(),
@@ -60,6 +62,13 @@ impl PromptsConfig {
     /// Get summary generation prompt with entry content substituted
     pub fn get_summary_prompt(&self, entry_content: &str) -> String {
         self.summary_generation.replace("{entry_content}", entry_content)
+    }
+    
+    /// Get status update prompt with current status and entry content substituted
+    pub fn get_status_update_prompt(&self, current_status: &str, entry_content: &str) -> String {
+        self.status_update
+            .replace("{current_status}", current_status)
+            .replace("{entry_content}", entry_content)
     }
     
     /// Get prompt template for the given prompt type with context substituted

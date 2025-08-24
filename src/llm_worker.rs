@@ -232,28 +232,7 @@ impl LlmWorker {
             .map(|s| s.as_str())
             .unwrap_or("No previous status recorded.");
         
-        let prompt = format!(
-            r#"Based on this journal entry and the current status, update the user's ongoing life circumstances. Focus on significant changes, ongoing situations, emotional states, relationships, work/health updates, and challenges/projects that should be remembered for future context.
-
-CURRENT STATUS:
-{}
-
-TODAY'S JOURNAL ENTRY:
-{}
-
-Please provide an updated status summary that:
-1. Preserves important ongoing situations from current status
-2. Incorporates significant new developments from today's entry  
-3. Removes outdated information
-4. Focuses on context that will be valuable for future journal prompts
-5. Keeps it concise but informative (3-5 sentences)
-
-If today's entry doesn't contain significant status changes, respond with "NO_UPDATE_NEEDED".
-
-Updated Status:"#,
-            current_status,
-            entry_content
-        );
+        let prompt = personalization_config.prompts.get_status_update_prompt(current_status, entry_content);
         
         let response = self.generate_text(&prompt, 200).await?;
         let response = response.trim();
