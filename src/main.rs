@@ -137,7 +137,19 @@ async fn main() {
 
     // Run our app with hyper, listening on configured port
     let bind_address = format!("{}:{}", config.server.host, config.server.port);
-    let listener = tokio::net::TcpListener::bind(&bind_address).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(&bind_address).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                eprintln!("\n❌ ERROR: Port {} is already in use!", config.server.port);
+                eprintln!("   Another instance of llm_journal may be running.");
+                eprintln!("   Please stop the other instance or change the port in config.toml\n");
+            } else {
+                eprintln!("\n❌ ERROR: Failed to bind to {}: {}\n", bind_address, e);
+            }
+            std::process::exit(1);
+        }
+    };
     tracing::info!("Server running on http://{}", bind_address);
     tracing::info!("   Press Ctrl+C to shutdown gracefully");
     
