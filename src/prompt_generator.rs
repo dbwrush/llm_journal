@@ -7,6 +7,14 @@ use crate::prompts::PromptsConfig;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use chrono::{Local, NaiveTime};
+use serde::{Deserialize, Serialize};
+
+/// Reference to a writing sample by date and number
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SampleReference {
+    pub date: String,
+    pub number: u8,
+}
 
 /// Background service that generates daily prompts at a scheduled time
 pub struct PromptGenerator {
@@ -134,6 +142,53 @@ impl PromptGenerator {
         Ok(duration_until_target)
     }
 
+    /// Select relevant writing samples based on recent journal context (Stage 1 of two-stage generation)
+    async fn select_relevant_samples(
+        llm_worker: &Arc<crate::llm_worker::LlmWorker>,
+        recent_summaries: &[String],
+        all_sample_summaries: &[(CycleDate, u8, String)],
+        personalization_config: &PersonalizationConfig,
+    ) -> Result<Vec<SampleReference>, Box<dyn std::error::Error>> {
+        if all_sample_summaries.is_empty() {
+            tracing::debug!("No writing samples available for selection");
+            return Ok(Vec::new());
+        }
+
+        // Format recent summaries
+        let recent_summaries_str = recent_summaries.join("\n");
+        
+        // Format sample summaries with date and number
+        let sample_summaries_str = all_sample_summaries.iter()
+            .map(|(date, num, summary)| format!("Date: {}, Sample {}: {}", date, num, summary))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        
+        let prompt = personalization_config.prompts.get_sample_selection_prompt(
+            &recent_summaries_str,
+            &sample_summaries_str,
+        );
+        
+        tracing::debug!("Requesting sample selection from LLM...");
+        let response = llm_worker.generate_text(&prompt, 200).await?;
+        let response = response.trim();
+        
+        // Try to parse JSON response
+        match serde_json::from_str::<Vec<SampleReference>>(response) {
+            Ok(references) => {
+                if references.is_empty() {
+                    tracing::info!("LLM selected no writing samples for context");
+                } else {
+                    tracing::info!("LLM selected {} writing sample(s) for context", references.len());
+                }
+                Ok(references)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse sample selection response: {}. Response was: {}", e, response);
+                Ok(Vec::new()) // Return empty vec on parse failure
+            }
+        }
+    }
+
     /// Unified prompt generation function with optional summary/status checks
     /// - skip_checks: true to skip summary/status generation (for 2nd and 3rd prompts in daily batch)
     async fn generate_prompts_unified(
@@ -191,9 +246,55 @@ impl PromptGenerator {
             // Get context for prompt generation (will use existing summaries if available)
             let context = journal_manager.get_context_for_prompt(cycle_date).await.map_err(|e| e.to_string())?;
             
+            // Two-stage writing sample selection (if enabled and samples exist)
+            let mut writing_sample_context = Vec::new();
+            if config.journal.enable_smart_sample_selection.unwrap_or(true) {
+                tracing::debug!("Performing two-stage writing sample selection...");
+                
+                // Get all sample summaries
+                match journal_manager.get_all_sample_summaries().await.map_err(|e| e.to_string()) {
+                    Ok(all_summaries) => {
+                        if !all_summaries.is_empty() {
+                            // Stage 1: Ask LLM which samples are relevant
+                            match Self::select_relevant_samples(&llm_worker, &context, &all_summaries, &personalization_config).await.map_err(|e| e.to_string()) {
+                                Ok(selected_refs) => {
+                                    // Stage 2: Load full text of selected samples
+                                    for reference in selected_refs {
+                                        if let Ok(cycle_date_ref) = CycleDate::from_string(&reference.date) {
+                                            match journal_manager.load_writing_sample(&cycle_date_ref, reference.number).await.map_err(|e| e.to_string()) {
+                                                Ok(Some(sample)) => {
+                                                    writing_sample_context.push(format!(
+                                                        "Writing Sample from {} (Sample {}):\n{}",
+                                                        reference.date, reference.number, sample.content
+                                                    ));
+                                                    tracing::info!("Loaded sample {}/{} for context", reference.date, reference.number);
+                                                }
+                                                Ok(None) => {
+                                                    tracing::warn!("Sample {}/{} not found", reference.date, reference.number);
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Failed to load sample {}/{}: {}", reference.date, reference.number, e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Sample selection failed: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to get sample summaries: {}", e);
+                    }
+                }
+            }
+            
             let prompt = llm_worker.generate_prompt(
                 cycle_date,
                 &context,
+                &writing_sample_context,
                 prompt_number,
                 prompt_type.clone(),
                 &personalization_config,
@@ -301,10 +402,14 @@ impl PromptGenerator {
         // Get context for prompt generation
         let context = self.journal_manager.get_context_for_prompt(cycle_date).await?;
 
+        // For on-demand generation, don't do two-stage selection (keep it simple)
+        let writing_sample_context = Vec::new();
+
         // Generate the prompt
         let prompt = llm_worker.generate_prompt(
             cycle_date,
             &context,
+            &writing_sample_context,
             prompt_number,
             prompt_type,
             &self.personalization_config,
@@ -328,7 +433,7 @@ impl PromptGenerator {
         // Spawn a background task to handle the generation
         tokio::spawn(async move {
             // Remove the max_prompts_per_day limitation for unlimited prompts
-            if let Ok(Some(_)) = journal_manager.load_prompt(&cycle_date, prompt_number).await {
+            if let Ok(Some(_)) = journal_manager.load_prompt(&cycle_date, prompt_number).await.map_err(|e| e.to_string()) {
                 tracing::debug!("Prompt {} already exists for {}, skipping", prompt_number, cycle_date);
                 return;
             }
@@ -341,7 +446,7 @@ impl PromptGenerator {
                 &cycle_date, 
                 prompt_number,
                 &personalization_config,
-            ).await {
+            ).await.map_err(|e| e.to_string()) {
                 Ok(()) => {
                     tracing::info!("Successfully generated queued prompt {} for {}", prompt_number, cycle_date);
                 }
@@ -367,6 +472,9 @@ impl PromptGenerator {
                 processing_time: "03:00".to_string(),
                 prompt_generation_time: "06:00".to_string(),
                 max_prompts_per_day: prompt_number, // Generate up to the requested prompt number
+                max_samples_per_day: 10,
+                max_sample_size_kb: 500,
+                enable_smart_sample_selection: Some(true),
             },
             ..Default::default()
         };
@@ -519,6 +627,47 @@ impl PromptGenerator {
                     tracing::info!("Summary saved for {} (no status changes)", cycle_date);
                 }
             }
+        }
+        
+        // Now handle writing sample summaries
+        tracing::info!("Checking for writing samples that need summaries...");
+        let samples_needing_summaries = journal_manager.find_samples_needing_summaries().await.map_err(|e| e.to_string())?;
+        
+        if !samples_needing_summaries.is_empty() {
+            tracing::info!("Found {} writing samples needing summaries", samples_needing_summaries.len());
+            
+            for (cycle_date, sample_number) in samples_needing_summaries {
+                // Load the sample content
+                match journal_manager.load_writing_sample(&cycle_date, sample_number).await.map_err(|e| e.to_string()) {
+                    Ok(Some(sample)) => {
+                        tracing::info!("Generating summary for writing sample {}/{}", cycle_date, sample_number);
+                        
+                        match llm_worker.generate_writing_sample_summary(&sample.content, &cycle_date, sample_number, personalization_config).await.map_err(|e| e.to_string()) {
+                            Ok(summary) => {
+                                match journal_manager.save_sample_summary(&summary).await.map_err(|e| e.to_string()) {
+                                    Ok(_) => {
+                                        tracing::info!("Saved summary for writing sample {}/{}", cycle_date, sample_number);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to save summary for sample {}/{}: {}", cycle_date, sample_number, e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to generate summary for sample {}/{}: {}", cycle_date, sample_number, e);
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::warn!("Writing sample {}/{} not found", cycle_date, sample_number);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load writing sample {}/{}: {}", cycle_date, sample_number, e);
+                    }
+                }
+            }
+        } else {
+            tracing::info!("All writing samples already have summaries");
         }
         
         Ok(())

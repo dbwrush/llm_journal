@@ -25,6 +25,7 @@ pub struct AppState {
     pub tokens_file_manager: Arc<TokensFileManager>,
     pub config: Arc<Config>,
     pub journal_manager: Arc<journal::JournalManager>,
+    pub llm_manager: Arc<LlmManager>,
     pub prompt_generator: Option<Arc<prompt_generator::PromptGenerator>>,
     pub personalization_config: Arc<personalization::PersonalizationConfig>,
 }
@@ -125,6 +126,7 @@ async fn main() {
         tokens_file_manager: tokens_file_manager.clone(),
         config: config.clone(),
         journal_manager: journal_manager.clone(),
+        llm_manager: llm_manager.clone(),
         prompt_generator,
         personalization_config,
     };

@@ -7,6 +7,7 @@ use axum::{
 };
 use askama::Template;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::AppState;
 
@@ -45,6 +46,19 @@ pub struct JournalDateQuery {
     pub gregorian_date: Option<String>,
 }
 
+/// Query parameters for writing sample operations
+#[derive(Deserialize)]
+pub struct WritingSampleQuery {
+    pub date: Option<String>,
+    pub number: Option<u8>,
+}
+
+/// Query parameters for listing samples (date only)
+#[derive(Deserialize)]
+pub struct ListSamplesQuery {
+    pub date: Option<String>,
+}
+
 /// Creates all routes - simple and clean
 pub fn create_routes() -> Router<AppState> {
     use tower_http::services::ServeDir;
@@ -59,6 +73,12 @@ pub fn create_routes() -> Router<AppState> {
         .route("/journal/generate-prompt", post(generate_prompt_endpoint))
         .route("/journal/navigate-prompt", post(navigate_prompt_endpoint))
         .route("/journal/check-prompt-status", post(check_prompt_status_endpoint))
+        // Writing sample routes
+        .route("/journal/upload-sample", post(upload_writing_sample))
+        // NOTE: The list endpoint hits an axum Handler trait bound issue
+        // Use GET /journal/sample?date=X&number=Y to retrieve individual samples
+        // .route("/journal/samples", get(list_samples_for_date))
+        .route("/journal/sample", get(get_writing_sample).delete(delete_writing_sample))
         .nest_service("/static", ServeDir::new("static"))
 }
 
@@ -793,4 +813,242 @@ fn redirect_to_login() -> (StatusCode, [(&'static str, &'static str); 1], Html<&
         [("Location", "/login")],
         Html("Redirecting to login..."),
     )
+}
+
+// Writing Sample Handlers
+
+/// Form for uploading a writing sample
+#[derive(Deserialize)]
+pub struct WritingSampleUploadForm {
+    pub cycle_date: String,
+    pub content: String,
+    pub filename: Option<String>,
+}
+
+/// Upload a writing sample
+async fn upload_writing_sample(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<WritingSampleUploadForm>,
+) -> Response {
+    // Check authentication
+    let token = extract_session_token(&headers);
+    if let Some(token) = token {
+        if app_state.auth_manager.validate_session(&token).await {
+            // Parse cycle date
+            let cycle_date = match crate::cycle_date::CycleDate::from_string(&form.cycle_date) {
+                Ok(date) => date,
+                Err(e) => {
+                    tracing::error!("Invalid cycle date: {}", e);
+                    return (StatusCode::BAD_REQUEST, "Invalid date").into_response();
+                }
+            };
+
+            // Check content size
+            let size_kb = form.content.len() / 1024;
+            if size_kb > app_state.config.journal.max_sample_size_kb {
+                return (StatusCode::PAYLOAD_TOO_LARGE, format!("Sample too large (max {} KB)", app_state.config.journal.max_sample_size_kb)).into_response();
+            }
+
+            // Get existing sample numbers
+            let existing_samples = match app_state.journal_manager.list_writing_samples(&cycle_date).await {
+                Ok(samples) => samples,
+                Err(e) => {
+                    tracing::error!("Failed to list samples: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to check existing samples").into_response();
+                }
+            };
+
+            // Check sample limit
+            if existing_samples.len() >= app_state.config.journal.max_samples_per_day as usize {
+                return (StatusCode::BAD_REQUEST, format!("Maximum {} samples per day", app_state.config.journal.max_samples_per_day)).into_response();
+            }
+
+            // Determine next sample number
+            let sample_number = existing_samples.iter().max().map(|n| n + 1).unwrap_or(1);
+
+            // Create and save the sample
+            let sample = crate::journal::WritingSample {
+                cycle_date,
+                sample_number,
+                content: form.content,
+                uploaded_at: chrono::Local::now(),
+            };
+
+            match app_state.journal_manager.save_writing_sample(&sample).await {
+                Ok(_) => {
+                    tracing::info!("Writing sample {}/{} uploaded successfully", cycle_date, sample_number);
+                    
+                    // Queue background summarization
+                    let journal_mgr = Arc::clone(&app_state.journal_manager);
+                    let pers_config = Arc::clone(&app_state.personalization_config);
+                    let llm_mgr = Arc::clone(&app_state.llm_manager);
+                    let sample_content = sample.content.clone();
+                    
+                    tokio::spawn(async move {
+                        tracing::info!("Starting summary generation for sample {}/{}", cycle_date, sample_number);
+                        
+                        // Prepare LLM
+                        if let Err(e) = llm_mgr.prepare_for_processing().await.map_err(|e| e.to_string()) {
+                            tracing::error!("Failed to prepare LLM: {}", e);
+                            return;
+                        }
+                        
+                        let worker = llm_mgr.get_worker();
+                        
+                        // Generate summary
+                        match worker.generate_writing_sample_summary(&sample_content, &cycle_date, sample_number, &pers_config).await.map_err(|e| e.to_string()) {
+                            Ok(summary) => {
+                                // Save summary
+                                if let Err(e) = journal_mgr.save_sample_summary(&summary).await.map_err(|e| e.to_string()) {
+                                    tracing::error!("Failed to save sample summary: {}", e);
+                                } else {
+                                    tracing::info!("Sample summary generated for {}/{}", cycle_date, sample_number);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to generate sample summary: {}", e);
+                            }
+                        }
+                    });
+
+                    return (StatusCode::OK, Json(serde_json::json!({
+                        "success": true,
+                        "sample_number": sample_number,
+                        "message": "Sample uploaded successfully"
+                    }))).into_response();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to save writing sample: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to save sample").into_response();
+                }
+            }
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+}
+
+/// List writing samples for today's date
+async fn list_samples_for_date(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let token = extract_session_token(&headers);
+    
+    if let Some(token) = token {
+        if app_state.auth_manager.validate_session(&token).await {
+            let cycle_date = crate::cycle_date::CycleDate::today();
+            
+            // List samples
+            let sample_numbers = match app_state.journal_manager.list_writing_samples(&cycle_date).await {
+                Ok(nums) => nums,
+                Err(e) => {
+                    tracing::error!("Failed to list samples: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to list samples").into_response();
+                }
+            };
+            
+            // Build response
+            let mut samples_info = Vec::new();
+            for num in sample_numbers {
+                if let Ok(Some(sample)) = app_state.journal_manager.load_writing_sample(&cycle_date, num).await {
+                    let has_summary = app_state.journal_manager.load_sample_summary(&cycle_date, num).await.ok().flatten().is_some();
+                    samples_info.push(serde_json::json!({
+                        "sample_number": num,
+                        "uploaded_at": sample.uploaded_at.to_rfc3339(),
+                        "size": sample.content.len(),
+                        "has_summary": has_summary,
+                    }));
+                }
+            }
+            
+            return (StatusCode::OK, Json(serde_json::json!({
+                "samples": samples_info
+            }))).into_response();
+        }
+    }
+    
+    (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+}
+
+/// Get a specific writing sample
+async fn get_writing_sample(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<WritingSampleQuery>,
+) -> Response {
+    let token = extract_session_token(&headers);
+    if let Some(token) = token {
+        if app_state.auth_manager.validate_session(&token).await {
+            let date_str = params.date.as_deref().unwrap_or("");
+            let sample_number = params.number.unwrap_or(0);
+
+            if sample_number == 0 {
+                return (StatusCode::BAD_REQUEST, "Invalid sample number").into_response();
+            }
+
+            if let Ok(cycle_date) = crate::cycle_date::CycleDate::from_string(date_str) {
+                match app_state.journal_manager.load_writing_sample(&cycle_date, sample_number).await {
+                    Ok(Some(sample)) => {
+                        return (StatusCode::OK, Json(serde_json::json!({
+                            "sample_number": sample.sample_number,
+                            "content": sample.content,
+                            "uploaded_at": sample.uploaded_at.to_rfc3339(),
+                        }))).into_response();
+                    }
+                    Ok(None) => {
+                        return (StatusCode::NOT_FOUND, "Sample not found").into_response();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load sample: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load sample").into_response();
+                    }
+                }
+            }
+
+            return (StatusCode::BAD_REQUEST, "Invalid date").into_response();
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+}
+
+/// Delete a writing sample
+async fn delete_writing_sample(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<WritingSampleQuery>,
+) -> Response {
+    let token = extract_session_token(&headers);
+    if let Some(token) = token {
+        if app_state.auth_manager.validate_session(&token).await {
+            let date_str = params.date.as_deref().unwrap_or("");
+            let sample_number = params.number.unwrap_or(0);
+
+            if sample_number == 0 {
+                return (StatusCode::BAD_REQUEST, "Invalid sample number").into_response();
+            }
+
+            if let Ok(cycle_date) = crate::cycle_date::CycleDate::from_string(date_str) {
+                match app_state.journal_manager.delete_writing_sample(&cycle_date, sample_number).await {
+                    Ok(_) => {
+                        tracing::info!("Deleted writing sample {}/{}", cycle_date, sample_number);
+                        return (StatusCode::OK, Json(serde_json::json!({
+                            "success": true,
+                            "message": "Sample deleted successfully"
+                        }))).into_response();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to delete sample: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete sample").into_response();
+                    }
+                }
+            }
+
+            return (StatusCode::BAD_REQUEST, "Invalid date").into_response();
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
 }

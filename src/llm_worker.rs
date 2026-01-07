@@ -251,19 +251,48 @@ impl LlmWorker {
         }
     }
 
+    /// Generate a summary for a writing sample
+    pub async fn generate_writing_sample_summary(
+        &self,
+        sample_content: &str,
+        cycle_date: &CycleDate,
+        sample_number: u8,
+        personalization_config: &crate::personalization::PersonalizationConfig,
+    ) -> Result<crate::journal::WritingSampleSummary, Box<dyn std::error::Error>> {
+        let prompt = personalization_config.prompts.get_writing_sample_summary_prompt(sample_content);
+        
+        let summary = self.generate_text(&prompt, 150).await?;
+        
+        Ok(crate::journal::WritingSampleSummary {
+            cycle_date: *cycle_date,
+            sample_number,
+            summary: summary.trim().to_string(),
+            generated_at: Local::now(),
+        })
+    }
+
     /// Generate a journal prompt based on context
     pub async fn generate_prompt(
         &self,
         cycle_date: &CycleDate,
         context: &[String],
+        writing_sample_context: &[String],
         prompt_number: u8,
         prompt_type: PromptType,
         personalization_config: &crate::personalization::PersonalizationConfig,
     ) -> Result<JournalPrompt, Box<dyn std::error::Error>> {
         let context_str = context.join("\n\n");
         
+        // Add writing sample context if provided
+        let full_context = if !writing_sample_context.is_empty() {
+            let sample_context_str = writing_sample_context.join("\n\n---\n\n");
+            format!("{}\n\n=== RELEVANT WRITING SAMPLES ===\n\n{}", context_str, sample_context_str)
+        } else {
+            context_str
+        };
+        
         // Enrich context with user profile and style information
-        let enriched_context = personalization_config.enrich_context(&context_str);
+        let enriched_context = personalization_config.enrich_context(&full_context);
         
         let system_prompt = personalization_config.prompts.get_prompt_template(&prompt_type, &enriched_context);
 

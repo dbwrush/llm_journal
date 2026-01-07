@@ -22,6 +22,24 @@ pub struct JournalSummary {
     pub generated_at: DateTime<Local>,
 }
 
+/// Represents a writing sample uploaded by the user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WritingSample {
+    pub cycle_date: CycleDate,
+    pub sample_number: u8,
+    pub content: String,
+    pub uploaded_at: DateTime<Local>,
+}
+
+/// Represents a generated summary of a writing sample
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WritingSampleSummary {
+    pub cycle_date: CycleDate,
+    pub sample_number: u8,
+    pub summary: String,
+    pub generated_at: DateTime<Local>,
+}
+
 /// Represents a generated prompt for a specific day
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalPrompt {
@@ -88,6 +106,7 @@ impl JournalManager {
             prompt1: date_dir.join("prompt1.txt"),
             prompt2: date_dir.join("prompt2.txt"),
             prompt3: date_dir.join("prompt3.txt"),
+            date_dir,
         }
     }
 
@@ -354,6 +373,192 @@ impl JournalManager {
         
         Ok(context)
     }
+
+    /// Save a writing sample
+    pub async fn save_writing_sample(&self, sample: &WritingSample) -> Result<(), Box<dyn std::error::Error>> {
+        self.ensure_date_directory(&sample.cycle_date).await?;
+        let paths = self.get_file_paths(&sample.cycle_date);
+        let sample_path = paths.sample_path(sample.sample_number);
+        
+        let mut file = fs::File::create(&sample_path).await?;
+        file.write_all(sample.content.as_bytes()).await?;
+        
+        Ok(())
+    }
+
+    /// Load a writing sample
+    pub async fn load_writing_sample(&self, cycle_date: &CycleDate, sample_number: u8) -> Result<Option<WritingSample>, Box<dyn std::error::Error>> {
+        let paths = self.get_file_paths(cycle_date);
+        let sample_path = paths.sample_path(sample_number);
+        
+        if !sample_path.exists() {
+            return Ok(None);
+        }
+        
+        let content = fs::read_to_string(&sample_path).await?;
+        let metadata = fs::metadata(&sample_path).await?;
+        let uploaded_at = DateTime::from(metadata.created()?);
+        
+        Ok(Some(WritingSample {
+            cycle_date: *cycle_date,
+            sample_number,
+            content,
+            uploaded_at,
+        }))
+    }
+
+    /// List all writing sample numbers for a given date
+    pub async fn list_writing_samples(&self, cycle_date: &CycleDate) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let date_dir = self.base_path.join(cycle_date.to_string());
+        
+        if !date_dir.exists() {
+            return Ok(Vec::new());
+        }
+        
+        let mut sample_numbers = Vec::new();
+        let mut dir_entries = fs::read_dir(&date_dir).await?;
+        
+        while let Some(entry) = dir_entries.next_entry().await? {
+            if let Some(filename) = entry.file_name().to_str() {
+                // Match files like "sample1.txt", "sample2.txt", etc.
+                if filename.starts_with("sample") && filename.ends_with(".txt") && !filename.contains("_summary") {
+                    if let Some(num_str) = filename.strip_prefix("sample").and_then(|s| s.strip_suffix(".txt")) {
+                        if let Ok(num) = num_str.parse::<u8>() {
+                            sample_numbers.push(num);
+                        }
+                    }
+                }
+            }
+        }
+        
+        sample_numbers.sort_unstable();
+        Ok(sample_numbers)
+    }
+
+    /// Delete a writing sample and its summary
+    pub async fn delete_writing_sample(&self, cycle_date: &CycleDate, sample_number: u8) -> Result<(), Box<dyn std::error::Error>> {
+        let paths = self.get_file_paths(cycle_date);
+        let sample_path = paths.sample_path(sample_number);
+        let summary_path = paths.sample_summary_path(sample_number);
+        
+        if sample_path.exists() {
+            fs::remove_file(sample_path).await?;
+        }
+        
+        if summary_path.exists() {
+            fs::remove_file(summary_path).await?;
+        }
+        
+        Ok(())
+    }
+
+    /// Save a writing sample summary
+    pub async fn save_sample_summary(&self, summary: &WritingSampleSummary) -> Result<(), Box<dyn std::error::Error>> {
+        self.ensure_date_directory(&summary.cycle_date).await?;
+        let paths = self.get_file_paths(&summary.cycle_date);
+        let summary_path = paths.sample_summary_path(summary.sample_number);
+        
+        let mut file = fs::File::create(&summary_path).await?;
+        file.write_all(summary.summary.as_bytes()).await?;
+        
+        Ok(())
+    }
+
+    /// Load a writing sample summary
+    pub async fn load_sample_summary(&self, cycle_date: &CycleDate, sample_number: u8) -> Result<Option<WritingSampleSummary>, Box<dyn std::error::Error>> {
+        let paths = self.get_file_paths(cycle_date);
+        let summary_path = paths.sample_summary_path(sample_number);
+        
+        if !summary_path.exists() {
+            return Ok(None);
+        }
+        
+        let summary = fs::read_to_string(&summary_path).await?;
+        let metadata = fs::metadata(&summary_path).await?;
+        let generated_at = DateTime::from(metadata.created()?);
+        
+        Ok(Some(WritingSampleSummary {
+            cycle_date: *cycle_date,
+            sample_number,
+            summary,
+            generated_at,
+        }))
+    }
+
+    /// Get all writing sample summaries across all dates (for context building)
+    pub async fn get_all_sample_summaries(&self) -> Result<Vec<(CycleDate, u8, String)>, Box<dyn std::error::Error>> {
+        let mut all_summaries = Vec::new();
+        
+        // Read all date directories
+        let mut dir_entries = fs::read_dir(&self.base_path).await?;
+        
+        while let Some(entry) = dir_entries.next_entry().await? {
+            if entry.file_type().await?.is_dir() {
+                let dir_name = entry.file_name();
+                let dir_name_str = dir_name.to_string_lossy();
+                
+                // Check if this is a valid date directory (5 characters)
+                if dir_name_str.len() == 5 {
+                    if let Ok(cycle_date) = CycleDate::from_string(&dir_name_str) {
+                        // Find all sample summaries in this directory
+                        let date_dir = entry.path();
+                        let mut date_dir_entries = fs::read_dir(&date_dir).await?;
+                        
+                        while let Some(file_entry) = date_dir_entries.next_entry().await? {
+                            if let Some(filename) = file_entry.file_name().to_str() {
+                                // Match files like "sample1_summary.txt"
+                                if filename.starts_with("sample") && filename.ends_with("_summary.txt") {
+                                    if let Some(num_str) = filename.strip_prefix("sample")
+                                        .and_then(|s| s.strip_suffix("_summary.txt")) {
+                                        if let Ok(num) = num_str.parse::<u8>() {
+                                            if let Ok(summary) = fs::read_to_string(file_entry.path()).await {
+                                                all_summaries.push((cycle_date, num, summary));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(all_summaries)
+    }
+
+    /// Find writing samples that need summaries
+    pub async fn find_samples_needing_summaries(&self) -> Result<Vec<(CycleDate, u8)>, Box<dyn std::error::Error>> {
+        let mut samples_needing_summaries = Vec::new();
+        
+        // Read all date directories
+        let mut dir_entries = fs::read_dir(&self.base_path).await?;
+        
+        while let Some(entry) = dir_entries.next_entry().await? {
+            if entry.file_type().await?.is_dir() {
+                let dir_name = entry.file_name();
+                let dir_name_str = dir_name.to_string_lossy();
+                
+                // Check if this is a valid date directory (5 characters)
+                if dir_name_str.len() == 5 {
+                    if let Ok(cycle_date) = CycleDate::from_string(&dir_name_str) {
+                        let paths = self.get_file_paths(&cycle_date);
+                        
+                        // Find all samples in this directory
+                        let sample_numbers = self.list_writing_samples(&cycle_date).await?;
+                        for sample_number in sample_numbers {
+                            let summary_path = paths.sample_summary_path(sample_number);
+                            if !summary_path.exists() {
+                                samples_needing_summaries.push((cycle_date, sample_number));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(samples_needing_summaries)
+    }
 }
 
 /// File paths for a journal day
@@ -364,4 +569,17 @@ pub struct JournalFilePaths {
     pub prompt1: PathBuf,
     pub prompt2: PathBuf,
     pub prompt3: PathBuf,
+    date_dir: PathBuf,  // Store for helper methods
+}
+
+impl JournalFilePaths {
+    /// Get the path for a writing sample
+    pub fn sample_path(&self, sample_number: u8) -> PathBuf {
+        self.date_dir.join(format!("sample{}.txt", sample_number))
+    }
+
+    /// Get the path for a writing sample summary
+    pub fn sample_summary_path(&self, sample_number: u8) -> PathBuf {
+        self.date_dir.join(format!("sample{}_summary.txt", sample_number))
+    }
 }

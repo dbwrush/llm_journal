@@ -18,6 +18,18 @@ pub struct PromptsConfig {
     pub monthly_reflection: String,
     pub yearly_reflection: String,
     pub prompt_variations: PromptVariations,
+    #[serde(default = "default_writing_sample_summary")]
+    pub writing_sample_summary: String,
+    #[serde(default = "default_sample_selection")]
+    pub sample_selection: String,
+}
+
+fn default_writing_sample_summary() -> String {
+    "You are summarizing a writing sample for context purposes. Analyze this writing sample and create a concise summary (2-3 sentences) that captures:\n1. The main theme or subject matter\n2. The writing style and tone\n3. Key emotional or narrative elements\n4. Any notable creative techniques\n\nWriting sample:\n{sample_content}\n\nSummary:".to_string()
+}
+
+fn default_sample_selection() -> String {
+    "You are helping select relevant writing samples to provide context for today's journal prompts.\n\nRecent journal entry summaries:\n{recent_summaries}\n\nAvailable writing samples (by date and number):\n{sample_summaries}\n\nBased on the recent entries, which writing samples (if any) would provide useful context? Consider thematic connections, emotional continuity, or relevant creative work.\n\nRespond with ONLY a JSON array of objects with \"date\" and \"number\" fields, or empty array if none are relevant.\nExample: [{\"date\":\"10234\",\"number\":1},{\"date\":\"10231\",\"number\":2}]\nOr: []\n\nResponse:".to_string()
 }
 
 impl Default for PromptsConfig {
@@ -34,6 +46,8 @@ impl Default for PromptsConfig {
                 third: "\n\nCreate a third unique approach to this reflection:".to_string(),
                 additional: "\n\nCreate another unique and creative approach to this reflection (variation #{number}):".to_string(),
             },
+            writing_sample_summary: default_writing_sample_summary(),
+            sample_selection: default_sample_selection(),
         }
     }
 }
@@ -93,6 +107,18 @@ impl PromptsConfig {
             n if n > 3 => self.prompt_variations.additional.replace("{number}", &n.to_string()),
             _ => String::new(),
         }
+    }
+    
+    /// Get writing sample summary prompt with content substituted
+    pub fn get_writing_sample_summary_prompt(&self, sample_content: &str) -> String {
+        self.writing_sample_summary.replace("{sample_content}", sample_content)
+    }
+    
+    /// Get sample selection prompt with recent summaries and sample summaries substituted
+    pub fn get_sample_selection_prompt(&self, recent_summaries: &str, sample_summaries: &str) -> String {
+        self.sample_selection
+            .replace("{recent_summaries}", recent_summaries)
+            .replace("{sample_summaries}", sample_summaries)
     }
     
     /// Create example prompts.json file for user reference

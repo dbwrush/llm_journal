@@ -48,6 +48,27 @@ pub struct JournalConfig {
     pub prompt_generation_time: String,
     /// Maximum number of prompts to generate per day
     pub max_prompts_per_day: u8,
+    /// Maximum writing samples per day
+    #[serde(default = "default_max_samples_per_day")]
+    pub max_samples_per_day: u8,
+    /// Maximum sample size in KB
+    #[serde(default = "default_max_sample_size_kb")]
+    pub max_sample_size_kb: usize,
+    /// Enable two-stage smart sample selection for prompt generation
+    #[serde(default = "default_enable_smart_sample_selection")]
+    pub enable_smart_sample_selection: Option<bool>,
+}
+
+fn default_max_samples_per_day() -> u8 {
+    10
+}
+
+fn default_max_sample_size_kb() -> usize {
+    500
+}
+
+fn default_enable_smart_sample_selection() -> Option<bool> {
+    Some(true)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,6 +102,9 @@ impl Default for Config {
                 processing_time: "03:00".to_string(),  // Will be deprecated
                 prompt_generation_time: "03:00".to_string(),  // Unified processing at 3 AM
                 max_prompts_per_day: 3,
+                max_samples_per_day: default_max_samples_per_day(),
+                max_sample_size_kb: default_max_sample_size_kb(),
+                enable_smart_sample_selection: default_enable_smart_sample_selection(),
             },
             llm: LlmConfig {
                 model_path: "models/gpt-oss-20b.gguf".to_string(),
